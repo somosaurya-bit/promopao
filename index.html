@@ -357,9 +357,38 @@
 
 <!-- ABA: FINANCEIRO -->
 <div id="tab-financeiro" class="page">
-  <div class="resumo-grid" id="resumoFinanceiro"></div>
+
+  <!-- CUSTOS EDITÁVEIS -->
+  <div class="section-title" style="margin-top:0">Custos da campanha</div>
+  <div class="card-form" style="margin-bottom:16px">
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">
+      <div class="form-row" style="margin-bottom:0">
+        <label class="form-label">🖨️ Custo da tiragem</label>
+        <input type="number" class="form-input" id="custTiragem" placeholder="0,00" min="0" step="0.01" oninput="salvarCustos();renderFinanceiro()" value="">
+      </div>
+      <div class="form-row" style="margin-bottom:0">
+        <label class="form-label">🎨 Custo do designer</label>
+        <input type="number" class="form-input" id="custDesigner" placeholder="0,00" min="0" step="0.01" oninput="salvarCustos();renderFinanceiro()" value="">
+      </div>
+    </div>
+    <div class="form-row" style="margin-bottom:0">
+      <label class="form-label">📦 Custo do frete / entrega</label>
+      <input type="number" class="form-input" id="custFrete" placeholder="0,00" min="0" step="0.01" oninput="salvarCustos();renderFinanceiro()" value="">
+    </div>
+  </div>
+
+  <!-- RESUMO FINANCEIRO -->
+  <div class="section-title">Resumo financeiro</div>
+  <div id="resumoFinanceiro" style="margin-bottom:16px"></div>
+
+  <!-- PONTO DE EQUILÍBRIO -->
+  <div id="breakEvenBox" style="display:none;background:var(--branco);border:1px solid var(--cinza-borda);border-radius:14px;padding:16px;margin-bottom:16px"></div>
+
+  <!-- VENDAS POR PLANO -->
   <div class="section-title">Vendas por plano</div>
   <div id="chartPlanos" style="background:var(--branco);border:1px solid var(--cinza-borda);border-radius:14px;padding:16px;margin-bottom:16px;"></div>
+
+  <!-- COTAS POR VALOR -->
   <div class="section-title">Cotas por valor</div>
   <div id="cotasValorLista" style="background:var(--branco);border:1px solid var(--cinza-borda);border-radius:14px;padding:16px;"></div>
 </div>
@@ -817,26 +846,144 @@ function excluirVenda(id) {
   showToast('Venda removida');
 }
 
+/* ── CUSTOS PERSISTÊNCIA ── */
+function getCustos() {
+  try { return JSON.parse(localStorage.getItem('promopao_custos') || '{}'); } catch(e) { return {}; }
+}
+function salvarCustos() {
+  const c = {
+    tiragem:  parseFloat(document.getElementById('custTiragem').value)  || 0,
+    designer: parseFloat(document.getElementById('custDesigner').value) || 0,
+    frete:    parseFloat(document.getElementById('custFrete').value)    || 0
+  };
+  try { localStorage.setItem('promopao_custos', JSON.stringify(c)); } catch(e) {}
+}
+function carregarCustos() {
+  const c = getCustos();
+  if(c.tiragem)  document.getElementById('custTiragem').value  = c.tiragem;
+  if(c.designer) document.getElementById('custDesigner').value = c.designer;
+  if(c.frete)    document.getElementById('custFrete').value    = c.frete;
+}
+
 /* ── FINANCEIRO ── */
 function renderFinanceiro() {
+  carregarCustos();
+  const custos = getCustos();
+  const custTiragem  = custos.tiragem  || 0;
+  const custDesigner = custos.designer || 0;
+  const custFrete    = custos.frete    || 0;
+  const totalCustos  = custTiragem + custDesigner + custFrete;
+
   const totalVend = vendas.filter(v=>v.status==='vendida').reduce((s,v)=>s+v.valor,0);
   const totalRes  = vendas.filter(v=>v.status==='reservada').reduce((s,v)=>s+v.valor,0);
-  const ocupadas  = Object.keys(getCotasOcupadas()).length;
+  const totalGeral = totalVend + totalRes;
+  const lucro = totalVend - totalCustos;
+  const lucroComRes = totalGeral - totalCustos;
+  const ocupadas = Object.keys(getCotasOcupadas()).length;
   const perc = Math.round(ocupadas/22*100);
 
+  // Cor do lucro
+  const lucroColor = lucro >= 0 ? 'var(--verde)' : 'var(--vermelho)';
+  const lucroBg    = lucro >= 0 ? 'var(--verde-bg)' : 'var(--vermelho-bg)';
+  const lucroBorder= lucro >= 0 ? 'var(--verde)' : 'var(--vermelho)';
+
   document.getElementById('resumoFinanceiro').innerHTML = `
-    <div class="resumo-card destaque" style="grid-column:span 2">
-      <div class="resumo-label">Receita total (vendidas)</div>
-      <div class="resumo-valor">${fmtMoeda(totalVend)}</div>
+    <div class="resumo-grid" style="margin-bottom:10px">
+      <div class="resumo-card destaque" style="grid-column:span 2">
+        <div class="resumo-label">💰 Receita confirmada (vendidas)</div>
+        <div class="resumo-valor">${fmtMoeda(totalVend)}</div>
+      </div>
+      <div class="resumo-card">
+        <div class="resumo-label">⏳ Em reserva</div>
+        <div class="resumo-valor" style="color:var(--laranja);font-size:16px">${fmtMoeda(totalRes)}</div>
+      </div>
+      <div class="resumo-card">
+        <div class="resumo-label">📦 Cotas ocupadas</div>
+        <div class="resumo-valor" style="color:var(--marrom-medio);font-size:16px">${ocupadas}/22 <span style="font-size:11px;color:var(--texto-claro)">(${perc}%)</span></div>
+      </div>
     </div>
-    <div class="resumo-card">
-      <div class="resumo-label">Em reserva</div>
-      <div class="resumo-valor" style="color:var(--marrom-medio);font-size:16px">${fmtMoeda(totalRes)}</div>
-    </div>
-    <div class="resumo-card">
-      <div class="resumo-label">Cotas ocupadas</div>
-      <div class="resumo-valor" style="color:var(--laranja)">${ocupadas}/22 <span style="font-size:12px;color:var(--texto-claro)">(${perc}%)</span></div>
-    </div>`;
+    ${totalCustos > 0 ? `
+    <div style="background:var(--branco);border:1px solid var(--cinza-borda);border-radius:14px;padding:16px;margin-bottom:10px">
+      <div style="font-size:13px;font-weight:700;color:var(--texto);margin-bottom:10px">📊 Resultado financeiro</div>
+      <div style="display:flex;justify-content:space-between;font-size:13px;padding:6px 0;border-bottom:0.5px solid var(--cinza-borda)">
+        <span style="color:var(--texto-claro)">Receita confirmada</span>
+        <span style="font-weight:600;color:var(--verde)">${fmtMoeda(totalVend)}</span>
+      </div>
+      ${totalRes > 0 ? `<div style="display:flex;justify-content:space-between;font-size:13px;padding:6px 0;border-bottom:0.5px solid var(--cinza-borda)">
+        <span style="color:var(--texto-claro)">+ Reservas (se confirmarem)</span>
+        <span style="font-weight:600;color:var(--laranja)">${fmtMoeda(totalRes)}</span>
+      </div>` : ''}
+      ${custTiragem > 0 ? `<div style="display:flex;justify-content:space-between;font-size:13px;padding:6px 0;border-bottom:0.5px solid var(--cinza-borda)">
+        <span style="color:var(--texto-claro)">− Tiragem</span>
+        <span style="color:var(--vermelho)">${fmtMoeda(custTiragem)}</span>
+      </div>` : ''}
+      ${custDesigner > 0 ? `<div style="display:flex;justify-content:space-between;font-size:13px;padding:6px 0;border-bottom:0.5px solid var(--cinza-borda)">
+        <span style="color:var(--texto-claro)">− Designer</span>
+        <span style="color:var(--vermelho)">${fmtMoeda(custDesigner)}</span>
+      </div>` : ''}
+      ${custFrete > 0 ? `<div style="display:flex;justify-content:space-between;font-size:13px;padding:6px 0;border-bottom:0.5px solid var(--cinza-borda)">
+        <span style="color:var(--texto-claro)">− Frete</span>
+        <span style="color:var(--vermelho)">${fmtMoeda(custFrete)}</span>
+      </div>` : ''}
+      <div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0 0">
+        <span style="font-size:14px;font-weight:700">Lucro atual</span>
+        <span style="font-family:'Syne',sans-serif;font-size:20px;font-weight:800;color:${lucroColor}">${lucro >= 0 ? '+' : ''}${fmtMoeda(lucro)}</span>
+      </div>
+      ${totalRes > 0 ? `<div style="display:flex;justify-content:space-between;align-items:center;padding:4px 0 0">
+        <span style="font-size:11px;color:var(--texto-claro)">Se todas reservas confirmarem</span>
+        <span style="font-size:13px;font-weight:700;color:${lucroComRes>=0?'var(--verde)':'var(--vermelho)'}">
+          ${lucroComRes>=0?'+':''}${fmtMoeda(lucroComRes)}
+        </span>
+      </div>` : ''}
+    </div>` : ''}`;
+
+  // Ponto de equilíbrio
+  const beBox = document.getElementById('breakEvenBox');
+  if(totalCustos > 0) {
+    beBox.style.display = 'block';
+    // Ticket médio por cota vendida
+    const cotasVendidas = vendas.filter(v=>v.status==='vendida').reduce((s,v)=>s+v.cotas.length,0);
+    const ticketMedioCota = cotasVendidas > 0 ? totalVend / cotasVendidas : 0;
+    // Cotações necessárias com base no ticket médio
+    let beHtml = '';
+    if(totalVend >= totalCustos) {
+      beHtml = `<div style="display:flex;align-items:center;gap:10px">
+        <div style="font-size:32px">🎉</div>
+        <div>
+          <div style="font-family:'Syne',sans-serif;font-size:15px;font-weight:800;color:var(--verde)">Custos cobertos!</div>
+          <div style="font-size:13px;color:var(--texto-claro)">Você já está no lucro. Cada nova venda é lucro puro.</div>
+        </div>
+      </div>`;
+    } else {
+      const falta = totalCustos - totalVend;
+      const cotasFaltam = ticketMedioCota > 0 ? Math.ceil(falta / ticketMedioCota) : '—';
+      // Barra de progresso
+      const progPerc = totalCustos > 0 ? Math.min(100, Math.round(totalVend / totalCustos * 100)) : 0;
+      beHtml = `
+        <div style="font-size:13px;font-weight:700;color:var(--texto);margin-bottom:10px">🎯 Ponto de equilíbrio</div>
+        <div style="display:flex;justify-content:space-between;font-size:12px;color:var(--texto-claro);margin-bottom:6px">
+          <span>Progresso para cobrir custos</span>
+          <span style="font-weight:700;color:var(--laranja)">${progPerc}%</span>
+        </div>
+        <div style="background:var(--cinza-bg);border-radius:8px;height:12px;overflow:hidden;margin-bottom:12px">
+          <div style="width:${progPerc}%;height:100%;background:${progPerc>=100?'var(--verde)':'var(--laranja)'};border-radius:8px;transition:width 0.4s"></div>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+          <div style="background:var(--vermelho-bg);border-radius:10px;padding:10px;text-align:center">
+            <div style="font-size:11px;color:var(--texto-claro);margin-bottom:2px">Falta arrecadar</div>
+            <div style="font-family:'Syne',sans-serif;font-size:16px;font-weight:800;color:var(--vermelho)">${fmtMoeda(falta)}</div>
+          </div>
+          <div style="background:var(--laranja-bg);border-radius:10px;padding:10px;text-align:center">
+            <div style="font-size:11px;color:var(--texto-claro);margin-bottom:2px">Cotas estimadas</div>
+            <div style="font-family:'Syne',sans-serif;font-size:16px;font-weight:800;color:var(--laranja)">${cotasFaltam} cotas</div>
+          </div>
+        </div>
+        ${ticketMedioCota > 0 ? `<div style="font-size:11px;color:var(--texto-claro);margin-top:8px;text-align:center">baseado no ticket médio de ${fmtMoeda(ticketMedioCota)} por cota</div>` : '<div style="font-size:11px;color:var(--texto-claro);margin-top:8px;text-align:center">registre vendas para calcular a estimativa de cotas</div>'}`;
+    }
+    beBox.innerHTML = beHtml;
+  } else {
+    beBox.style.display = 'none';
+  }
 
   const todos = PLANOS.concat(EXCLUSIVOS);
   const contPlano = {};
