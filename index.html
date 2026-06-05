@@ -67,6 +67,8 @@
   .cota-slot { border: 1.5px solid var(--cinza-borda); border-radius: 10px; padding: 10px 8px; text-align: center; cursor: pointer; transition: all 0.15s; background: var(--cinza-bg); min-height: 68px; height: 68px; display: -webkit-box; display: -webkit-flex; display: flex; -webkit-box-orient: vertical; -webkit-box-direction: normal; -webkit-flex-direction: column; flex-direction: column; -webkit-box-align: center; -webkit-align-items: center; align-items: center; -webkit-box-pack: center; -webkit-justify-content: center; justify-content: center; position: relative; }
   .cota-slot:active { -webkit-transform: scale(0.96); transform: scale(0.96); }
   .cota-slot.disponivel { background: #FDECEA; border-color: var(--vermelho); }
+  .cota-slot.pendente   { background: #FFFBEA; border-color: #D4A800; }
+  .cota-slot.pendente .cota-num { color: #B8860B; }
   .cota-slot.vendida    { background: var(--verde-bg); border-color: var(--verde); }
   .cota-slot.reservada  { background: #FFF4EC; border-color: var(--laranja); }
 
@@ -229,6 +231,7 @@
   <button class="tab-btn" onclick="showTab('vender')"><span class="tab-icon">➕</span>Vender</button>
   <button class="tab-btn" onclick="showTab('vendas')"><span class="tab-icon">📋</span>Vendas</button>
   <button class="tab-btn" onclick="showTab('financeiro')"><span class="tab-icon">💰</span>Financeiro</button>
+  <button class="tab-btn" onclick="showTab('pendentes')" style="position:relative"><span class="tab-icon">⏳</span>Pendentes<span id="badgePendentes" style="position:absolute;top:6px;right:6px;background:var(--vermelho);color:white;font-size:9px;font-weight:800;min-width:16px;height:16px;border-radius:8px;display:flex;align-items:center;justify-content:center;padding:0 3px"></span></button>
 </nav>
 
 <!-- ABA: SAQUINHO -->
@@ -393,6 +396,19 @@
   <div id="cotasValorLista" style="background:var(--branco);border:1px solid var(--cinza-borda);border-radius:14px;padding:16px;"></div>
 </div>
 
+<!-- ABA: PENDENTES -->
+<div id="tab-pendentes" class="page">
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+    <div style="font-family:'Syne',sans-serif;font-size:15px;font-weight:700">Reservas pendentes</div>
+    <button onclick="carregarCotasDB(function(){renderPendentes();showToast('Atualizado!','success');})" style="padding:8px 14px;border:1.5px solid var(--cinza-borda);border-radius:8px;background:white;font-size:12px;cursor:pointer">🔄 Atualizar</button>
+  </div>
+  <div style="background:#FFFBEA;border:1px solid #D4A800;border-radius:12px;padding:12px 14px;font-size:12px;color:#7A5C00;margin-bottom:14px;line-height:1.6">
+    <strong>Como funciona:</strong> Quando um cliente envia um pedido pela página de pedidos, as cotas ficam <strong>pendentes</strong> aqui. 
+    Use <strong>✓</strong> para confirmar como vendida, ou <strong>✕</strong> para liberar a cota de volta.
+  </div>
+  <div id="listaPendentes"></div>
+</div>
+
 <!-- MODAL COTA -->
 <div class="modal-overlay" id="modalCota" onclick="fecharModal('modalCota')">
   <div class="modal-box" onclick="event.stopPropagation()">
@@ -418,6 +434,38 @@
 if(!String.prototype.padStart){String.prototype.padStart=function(l,c){var s=String(this);c=c||' ';while(s.length<l)s=c+s;return s;};}
 if(!Array.prototype.find){Array.prototype.find=function(fn){for(var i=0;i<this.length;i++){if(fn(this[i],i,this))return this[i];}return undefined;};}
 if(!Array.prototype.findIndex){Array.prototype.findIndex=function(fn){for(var i=0;i<this.length;i++){if(fn(this[i],i,this))return i;}return -1;};}
+
+// ─── SUPABASE CONFIG ───
+var SUPA_URL = 'https://hlmapyzaksffxgjgvtof.supabase.co';
+var SUPA_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImhsbWFweXpha3NmZnhnamd2dG9mIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODA2ODg4MTcsImV4cCI6MjA5NjI2NDgxN30.VAyv0bVY_AZR1wN9HpyOlG9lkztUNsB6L8fTYkW2QKc';
+
+function supaFetch(path, opts) {
+  var h = {'apikey':SUPA_KEY,'Authorization':'Bearer '+SUPA_KEY,'Content-Type':'application/json','Prefer':'return=minimal'};
+  if(opts && opts.headers) Object.keys(opts.headers).forEach(function(k){h[k]=opts.headers[k];});
+  return fetch(SUPA_URL+'/rest/v1/'+path, Object.assign({},opts||{},{headers:h}));
+}
+
+// cotasDB: { 'F01': { status, cliente_nome, cliente_empresa, cliente_telefone, plano, tiragem, obs, valor, updated_at } }
+var cotasDB = {};
+
+function carregarCotasDB(cb) {
+  supaFetch('cotas?select=*')
+    .then(function(r){return r.json();})
+    .then(function(rows){
+      cotasDB = {};
+      rows.forEach(function(r){ cotasDB[r.codigo] = r; });
+      if(cb) cb();
+    })
+    .catch(function(){ showToast('Erro ao sincronizar com banco','error'); if(cb) cb(); });
+}
+
+function supaUpdateCota(codigo, dados) {
+  return supaFetch('cotas?codigo=eq.'+codigo, {
+    method:'PATCH',
+    body: JSON.stringify(Object.assign({updated_at: new Date().toISOString()}, dados))
+  });
+}
+
 const PLANOS = [
   { id:'essencial',   nome:'Essencial',      cotas:1,  preco:350,  desconto:0,  desc:'Ideal para começar.' },
   { id:'destaque',    nome:'Destaque',        cotas:2,  preco:630,  desconto:10, precoOriginal:700,  desc:'Aparece 2x no saco.' },
@@ -455,7 +503,27 @@ function fmtSacos(n) { return n >= 1000 ? (n/1000).toLocaleString('pt-BR') + 'k'
 
 function getCotasOcupadas() {
   var map = {};
+  // vendas locais (legado)
   vendas.forEach(function(v){ v.cotas.forEach(function(c){ map[c] = v; }); });
+  // banco remoto sobrescreve (fonte de verdade)
+  Object.keys(cotasDB).forEach(function(cod){
+    var row = cotasDB[cod];
+    if(row.status === 'vendida' || row.status === 'pendente' || row.status === 'reservada') {
+      map[cod] = {
+        nome: row.cliente_nome || '—',
+        empresa: row.cliente_empresa || '—',
+        telefone: row.cliente_telefone || '—',
+        status: row.status,
+        plano: row.plano || '—',
+        tiragem: row.tiragem || '—',
+        obs: row.obs || '',
+        valor: row.valor || 0,
+        cotas: [cod],
+        _fromDB: true,
+        _codigo: cod,
+      };
+    }
+  });
   return map;
 }
 
@@ -485,12 +553,17 @@ function renderGrids() {
 
 function renderStats() {
   var mapa = getCotasOcupadas();
-  var ven=0, res=0;
-  Object.keys(mapa).forEach(function(k){ var v=mapa[k]; if(v.status==='vendida') ven++; else res++; });
+  var ven=0, res=0, pend=0;
+  Object.keys(mapa).forEach(function(k){
+    var v=mapa[k];
+    if(v.status==='vendida') ven++;
+    else if(v.status==='pendente') pend++;
+    else res++;
+  });
   document.getElementById('statVendidas').textContent    = ven;
-  document.getElementById('statDisponiveis').textContent = 22 - ven - res;
-  document.getElementById('statReservadas').textContent  = res;
-  document.getElementById('headerBadge').textContent     = ven + ' / 22 vendidas';
+  document.getElementById('statDisponiveis').textContent = 22 - ven - res - pend;
+  document.getElementById('statReservadas').textContent  = res + pend;
+  document.getElementById('headerBadge').textContent     = ven + ' / 22 vendidas' + (pend>0?' · '+pend+' pendente'+(pend>1?'s':''):'');
 }
 
 /* ── PLANOS ── */
@@ -762,13 +835,30 @@ function registrarVenda() {
 
   vendas.push(venda);
   salvar();
+
+  // Gravar no Supabase
+  var planoNomeDB = (PLANOS.concat(EXCLUSIVOS).filter(function(p){return p.id===venda.plano;})[0]||{}).nome || venda.plano;
+  var tNome = (TIRAGENS_INFO[venda.tiragem]||{}).nome || venda.tiragem;
+  Promise.all(venda.cotas.map(function(cod){
+    return supaUpdateCota(cod, {
+      status: venda.status === 'reservada' ? 'reservada' : 'vendida',
+      cliente_nome: venda.nome,
+      cliente_empresa: venda.empresa,
+      cliente_telefone: venda.telefone,
+      plano: planoNomeDB,
+      tiragem: tNome,
+      obs: venda.obs,
+      valor: venda.valor,
+    });
+  })).then(function(){
+    carregarCotasDB(function(){ renderAll(); });
+    showToast('Venda registrada! ✅', 'success');
+  }).catch(function(){
+    showToast('Venda salva localmente (erro no banco)', 'error');
+    renderAll();
+  });
+
   limparFormulario();
-  showToast('Venda registrada! ✅', 'success');
-  if(document.readyState === "loading") {
-  document.addEventListener("DOMContentLoaded", renderAll);
-} else {
-  renderAll();
-}
 }
 
 function limparFormulario() {
@@ -840,10 +930,81 @@ function setFiltro(f, btn) {
 
 function excluirVenda(id) {
   if(!confirm('Remover esta venda?')) return;
+  var vd = vendas.filter(function(v){ return v.id===id; })[0];
   vendas = vendas.filter(function(v){ return v.id !== id; });
   salvar();
-  renderAll();
+  if(vd) {
+    Promise.all(vd.cotas.map(function(cod){
+      return supaUpdateCota(cod, {status:'disponivel',cliente_nome:null,cliente_empresa:null,cliente_telefone:null,plano:null,tiragem:null,obs:null,valor:null});
+    })).then(function(){ carregarCotasDB(function(){ renderAll(); }); });
+  } else {
+    renderAll();
+  }
   showToast('Venda removida');
+}
+
+// Liberar cota pendente (direto do painel)
+function liberarCota(cod) {
+  if(!confirm('Liberar a cota '+cod+' e remover a reserva pendente?')) return;
+  supaUpdateCota(cod, {status:'disponivel',cliente_nome:null,cliente_empresa:null,cliente_telefone:null,plano:null,tiragem:null,obs:null,valor:null})
+    .then(function(){ carregarCotasDB(function(){ renderAll(); renderPendentes(); showToast('Cota '+cod+' liberada ✅','success'); }); })
+    .catch(function(){ showToast('Erro ao liberar cota','error'); });
+}
+
+// Confirmar cota pendente como vendida
+function confirmarPendente(cod) {
+  if(!confirm('Confirmar cota '+cod+' como VENDIDA?')) return;
+  supaUpdateCota(cod, {status:'vendida'})
+    .then(function(){ carregarCotasDB(function(){ renderAll(); renderPendentes(); showToast('Cota '+cod+' confirmada como vendida ✅','success'); }); })
+    .catch(function(){ showToast('Erro ao confirmar','error'); });
+}
+
+// Renderizar aba de pendentes
+function renderPendentes() {
+  var el = document.getElementById('listaPendentes');
+  if(!el) return;
+  var pendentes = Object.keys(cotasDB).filter(function(k){ return cotasDB[k].status==='pendente'; });
+  var badge = document.getElementById('badgePendentes');
+  if(badge) badge.textContent = pendentes.length > 0 ? pendentes.length : '';
+
+  if(pendentes.length===0){
+    el.innerHTML='<div class="empty-state"><div class="empty-icon">✅</div><div class="empty-text">Nenhuma reserva pendente</div></div>';
+    return;
+  }
+
+  // Agrupar por cliente
+  var grupos = {};
+  pendentes.forEach(function(cod){
+    var row = cotasDB[cod];
+    var key = (row.cliente_nome||'?')+'|'+(row.cliente_telefone||'');
+    if(!grupos[key]) grupos[key] = {row:row, cotas:[]};
+    grupos[key].cotas.push(cod);
+  });
+
+  el.innerHTML = Object.keys(grupos).map(function(key){
+    var g = grupos[key];
+    var r = g.row;
+    var cotas = g.cotas;
+    var cotasBadges = cotas.map(function(c){ return '<span class="venda-cota-badge">'+c+'</span>'; }).join('');
+    var updated = r.updated_at ? new Date(r.updated_at).toLocaleString('pt-BR') : '—';
+    return '<div class="venda-card" style="border-left:3px solid #D4A800">'
+      +'<div class="venda-avatar" style="background:#D4A800">⏳</div>'
+      +'<div class="venda-info">'
+        +'<div class="venda-nome">'+(r.cliente_nome||'—')+'</div>'
+        +'<div class="venda-empresa">'+(r.cliente_empresa||'—')+' · '+(r.cliente_telefone||'—')+'</div>'
+        +'<div class="venda-cotas-list" style="margin-bottom:5px">'+cotasBadges+'</div>'
+        +'<div style="font-size:11px;color:var(--texto-claro)">'+( r.plano||'—')+' · '+(r.tiragem||'—')+'</div>'
+        +(r.valor?'<div class="venda-valor" style="margin-top:3px">R$ '+Number(r.valor).toLocaleString('pt-BR',{minimumFractionDigits:2})+'</div>':'')
+        +'<div style="font-size:10px;color:var(--texto-claro);margin-top:2px">Reservado em: '+updated+'</div>'
+      +'</div>'
+      +'<div class="venda-actions">'
+        +cotas.map(function(c){
+          return '<button style="padding:6px 8px;font-size:10px;border:1px solid var(--verde);border-radius:6px;background:white;color:var(--verde);cursor:pointer;margin-bottom:4px;white-space:nowrap" onclick="confirmarPendente(''+c+'')">✓ '+c+'</button>'
+                +'<button style="padding:6px 8px;font-size:10px;border:1px solid var(--vermelho);border-radius:6px;background:white;color:var(--vermelho);cursor:pointer;margin-bottom:4px;white-space:nowrap" onclick="liberarCota(''+c+'')">✕ '+c+'</button>';
+        }).join('')
+      +'</div>'
+      +'</div>';
+  }).join('');
 }
 
 /* ── CUSTOS PERSISTÊNCIA ── */
@@ -1124,25 +1285,33 @@ function showTab(nome) {
   Array.prototype.slice.call(document.querySelectorAll('.page')).forEach(function(p){ p.classList.remove('active'); });
   Array.prototype.slice.call(document.querySelectorAll('.tab-btn')).forEach(function(b){ b.classList.remove('active'); });
   document.getElementById('tab-'+nome).classList.add('active');
-  var idx = ['visao','vender','vendas','financeiro'].indexOf(nome);
+  var tabs = ['visao','vender','vendas','financeiro','pendentes'];
+  var idx = tabs.indexOf(nome);
   document.querySelectorAll('.tab-btn')[idx].classList.add('active');
   if(nome==='visao')      { renderGrids(); renderStats(); }
   if(nome==='vender')     { renderPlanosGrid(); renderCotasPicker(); }
   if(nome==='vendas')     { renderVendas(); }
   if(nome==='financeiro') { renderFinanceiro(); }
+  if(nome==='pendentes')  { renderPendentes(); }
 }
 
 function salvar() { try { localStorage.setItem('promopao_vendas', JSON.stringify(vendas)); } catch(e) {} }
 
 function renderAll() {
   renderGrids(); renderStats(); renderVendas(); renderFinanceiro();
-  renderPlanosGrid(); renderCotasPicker();
+  renderPlanosGrid(); renderCotasPicker(); renderPendentes();
+}
+
+function init() {
+  carregarCotasDB(function(){ renderAll(); });
+  // Recarregar banco a cada 30s para capturar novos pedidos
+  setInterval(function(){ carregarCotasDB(function(){ renderGrids(); renderStats(); renderPendentes(); }); }, 30000);
 }
 
 if(document.readyState === "loading") {
-  document.addEventListener("DOMContentLoaded", renderAll);
+  document.addEventListener("DOMContentLoaded", init);
 } else {
-  renderAll();
+  init();
 }
 </script>
 
