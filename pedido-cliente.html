@@ -432,19 +432,27 @@ function enviarPedido(){
       return (c[0]==='F'?'Frente ':'Verso ')+parseInt(c.slice(1));
     }).join(', ');
 
-    var msg='🥖 *Pedido PromoPão*\n\n'
-      +'👤 *Nome:* '+nome+'\n'
-      +'🏪 *Empresa:* '+empresa+'\n'
-      +'📱 *WhatsApp:* '+tel+'\n\n'
+    // Posições legíveis (ex: 'Frente 1', 'Verso 3')
+    var posicoesLegivel = cotasParaReservar.map(function(c){
+      return (c[0]==='F'?'Frente':'Verso')+' '+parseInt(c.slice(1));
+    }).join(', ');
+
+    var msg='🍞✨ *NOVO PEDIDO PROMOPÃO*\n'
+      +'👤 *Cliente:* '+nome+'\n'
+      +'🏢 *Empresa:* '+empresa+'\n'
+      +'📱 *WhatsApp:* '+tel+'\n'
       +'━━━━━━━━━━━━━━━━━━━\n'
-      +'📦 *Plano:* '+plano.nome+' ('+cotasParaReservar.length+' cota'+(cotasParaReservar.length>1?'s':'')+')\n'
-      +'📍 *Cotas:* '+codigosTxt+'\n'
-      +'🖨️ *Tiragem:* '+t.nome+' — '+t.desc+'\n'
-      +(t.desconto>0?'🎁 *Desconto:* '+t.desconto+'% aplicado\n':'')
-      +'\n💰 *Total estimado:* '+fmtMoeda(total)+'\n'
-      +(obs?'\n📝 *Obs:* '+obs+'\n':'')
-      +'\n━━━━━━━━━━━━━━━━━━━\n'
-      +'_Cotas reservadas aguardando confirmação. Enviado pelo link PromoPão._';
+      +'📦 *Plano Contratado:* '+plano.nome+' ('+cotasParaReservar.length+' cota'+(cotasParaReservar.length>1?'s':'')+')\n'
+      +'📍 *Posição da Cota:* '+posicoesLegivel+'\n'
+      +'🛍️ *Tiragem:* '+t.nome+'\n'
+      +'📄 *Quantidade:* '+Number(t.sacos).toLocaleString('pt-BR')+' sacos de pão\n'
+      +(t.desconto>0?'🎁 *Desconto Aplicado:* '+t.desconto+'%\n':'')
+      +'\n💰 *Valor Total:* '+fmtMoeda(total)+'\n'
+      +(obs?'\n📝 *Observação:* '+obs+'\n':'')
+      +'━━━━━━━━━━━━━━━━━━━\n'
+      +'⏳ *Status:* Cotas reservadas aguardando confirmação.\n'
+      +'✅ Após a confirmação, sua reserva será garantida e seguiremos com as próximas etapas da divulgação.\n'
+      +'\n🍞🚀 _PromoPão — sua marca circulando todos os dias na cidade._';
 
     window.open('https://wa.me/'+WA_NUM+'?text='+encodeURIComponent(msg),'_blank');
     showToast('Cotas reservadas! Abrindo WhatsApp... ✅','success');
