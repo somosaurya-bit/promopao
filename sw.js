@@ -1,4 +1,4 @@
-const CACHE_NAME = 'promopao-v1';
+const CACHE_NAME = 'promopao-v2';
 const ASSETS = [
   './',
   './index.html',
