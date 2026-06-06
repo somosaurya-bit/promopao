@@ -1047,13 +1047,12 @@ function renderVendas() {
     return;
   }
   const cores = ['#E85D04','#1B7A4A','#7A3B10','#185FA5','#993556'];
-  el.innerHTML = lista.map(function(v) {
+  // Store in global map for safe access by index
+  window._listaVendasRender = lista;
+  el.innerHTML = lista.map(function(v, idx) {
     const ini = (v.nome||'?').substring(0,2).toUpperCase();
     const corIdx = typeof v.id === 'number' ? v.id % cores.length : (v.nome||'?').charCodeAt(0) % cores.length;
     const cor = cores[corIdx];
-    const idSafe = JSON.stringify(String(v.id));
-    const fromDB = v._fromDB ? 'true' : 'false';
-    const cotasSafe = JSON.stringify(v.cotas);
     return '<div class="venda-card">'
       + '<div class="venda-avatar" style="background:' + cor + '">' + ini + '</div>'
       + '<div class="venda-info">'
@@ -1067,7 +1066,7 @@ function renderVendas() {
         + '<div class="venda-data">' + fmtData(v.data) + '</div>'
       + '</div>'
       + '<div class="venda-actions">'
-        + '<button class="btn-danger" onclick="excluirVendaSafe(' + idSafe + ',' + fromDB + ',' + cotasSafe + ')">x</button>'
+        + '<button class="btn-danger" onclick="excluirVendaIdx(' + idx + ')">x</button>'
       + '</div>'
       + '</div>';
   }).join('');
@@ -1078,6 +1077,13 @@ function setFiltro(f, btn) {
   Array.prototype.slice.call(document.querySelectorAll('.filtro-btn')).forEach(function(b){ b.classList.remove('active'); });
   btn.classList.add('active');
   renderVendas();
+}
+
+function excluirVendaIdx(idx) {
+  var lista = window._listaVendasRender || [];
+  var v = lista[idx];
+  if (!v) { showToast('Venda não encontrada', 'error'); return; }
+  excluirVendaSafe(String(v.id), !!v._fromDB, v.cotas || []);
 }
 
 function excluirVenda(id) {
