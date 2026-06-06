@@ -482,7 +482,12 @@ function confirmarPendente(cod) {
   abrirModalConfirmar(cotasDoCliente, row);
 }
 
+var _pendCotas = [];
+var _pendRow   = {};
+
 function abrirModalConfirmar(cotas, row) {
+  _pendCotas = cotas;
+  _pendRow   = row;
   // Calcular valor estimado baseado no que veio do cliente
   var valorExistente = row.valor || 0;
 
@@ -529,7 +534,7 @@ function abrirModalConfirmar(cotas, row) {
       + '</select>'
     + '</div>'
 
-    + '<button onclick="finalizarConfirmacao(' + JSON.stringify(cotas) + ',' + JSON.stringify(row) + ')" style="width:100%;padding:15px;background:var(--verde);color:white;border:none;border-radius:12px;font-family:Syne,sans-serif;font-size:15px;font-weight:700;cursor:pointer;margin-bottom:8px">'
+    + '<button onclick="finalizarConfirmacao()" style="width:100%;padding:15px;background:var(--verde);color:white;border:none;border-radius:12px;font-family:Syne,sans-serif;font-size:15px;font-weight:700;cursor:pointer;margin-bottom:8px">'
       + 'Registrar como venda'
     + '</button>'
     + '<button onclick="fecharModal(\'modalConfirmar\')" style="width:100%;padding:13px;background:transparent;color:var(--texto-claro);border:1.5px solid var(--cinza-borda);border-radius:12px;font-size:14px;cursor:pointer">'
@@ -539,9 +544,16 @@ function abrirModalConfirmar(cotas, row) {
   document.getElementById('modalConfirmar').classList.add('open');
 }
 
-function finalizarConfirmacao(cotas, row) {
+function finalizarConfirmacao() {
+  var cotas = _pendCotas.slice();
+  var row   = Object.assign({}, _pendRow);
+  if (!cotas || cotas.length === 0) { showToast('Erro: dados não encontrados', 'error'); return; }
   var valorFinal = parseFloat(document.getElementById('inputValorConfirmar').value) || 0;
   var statusFinal = document.getElementById('selectStatusConfirmar').value;
+
+  // Desabilitar botão
+  var btnConf = document.querySelector('#modalConfirmar button');
+  if (btnConf) { btnConf.disabled = true; btnConf.textContent = 'Salvando...'; }
 
   // Registrar como venda local
   var venda = {
@@ -567,18 +579,28 @@ function finalizarConfirmacao(cotas, row) {
 
   // Atualizar no Supabase
   Promise.all(cotas.map(function(cod) {
-    return supaSetCota(cod, { status: statusFinal, valor: valorFinal });
+    return supaSetCota(cod, {
+      status: statusFinal,
+      valor: valorFinal,
+      cliente_nome: venda.nome,
+      cliente_empresa: venda.empresa,
+      cliente_telefone: venda.telefone,
+      plano: venda.plano,
+      tiragem: venda.tiragem,
+      obs: venda.obs
+    });
   })).then(function() {
     sincronizar(function() {
-      renderAll();
       fecharModal('modalConfirmar');
-      showToast('Venda registrada com sucesso!', 'success');
+      renderAll();
       showTab('vendas');
+      showToast('Venda registrada com sucesso!', 'success');
     });
-  }).catch(function() {
-    renderAll();
+  }).catch(function(err) {
+    console.error('Supabase error:', err);
     fecharModal('modalConfirmar');
-    showToast('Venda salva (erro no banco)', 'error');
+    renderAll();
+    showToast('Venda salva localmente', 'error');
   });
 }
 
@@ -914,6 +936,11 @@ function registrarVenda() {
   var planoNome = plano.nome;
   var tNome = (TIRAGENS_INFO[venda.tiragem] || {}).nome || venda.tiragem;
   var novoStatus = venda.status === 'reservada' ? 'reservada' : 'vendida';
+
+  // Desabilitar botão enquanto salva
+  var btnReg = document.querySelector('.btn-primary');
+  if (btnReg) { btnReg.disabled = true; btnReg.textContent = 'Salvando...'; }
+
   Promise.all(venda.cotas.map(function(cod) {
     return supaSetCota(cod, {
       status: novoStatus,
@@ -926,11 +953,20 @@ function registrarVenda() {
       valor: venda.valor
     });
   })).then(function() {
-    sincronizar(function() { renderAll(); showToast('Venda registrada!', 'success'); });
-  }).catch(function() {
-    renderAll(); showToast('Salvo localmente (erro no banco)', 'error');
+    sincronizar(function() {
+      limparFormulario();
+      renderAll();
+      showToast('Venda registrada!', 'success');
+    });
+  }).catch(function(err) {
+    console.error('Supabase error:', err);
+    limparFormulario();
+    renderAll();
+    showToast('Venda salva localmente', 'error');
+  }).finally(function() {
+    var btnReg2 = document.querySelector('.btn-primary');
+    if (btnReg2) { btnReg2.disabled = false; btnReg2.textContent = 'Registrar venda'; }
   });
-  limparFormulario();
 }
 
 function limparFormulario() {
@@ -956,11 +992,54 @@ function limparFormulario() {
 function renderVendas() {
   var siEl = document.getElementById('searchInput');
   var busca = (siEl ? siEl.value : '').toLowerCase();
-  let lista = vendas.filter(function(v) {
+
+  // Merge localStorage vendas + Supabase vendidas/reservadas not already in local
+  var localIds = vendas.map(function(v) { return v.cotas.join(','); });
+  var dbVendas = [];
+  // Group DB rows by cliente+plano to avoid one entry per cota
+  var dbGrupos = {};
+  Object.keys(cotasDB).forEach(function(cod) {
+    var row = cotasDB[cod];
+    if (row.status !== 'vendida' && row.status !== 'reservada') return;
+    var key = (row.cliente_nome||'?') + '||' + (row.cliente_telefone||'') + '||' + (row.plano||'');
+    if (!dbGrupos[key]) dbGrupos[key] = { row: row, cotas: [] };
+    dbGrupos[key].cotas.push(cod);
+  });
+  Object.keys(dbGrupos).forEach(function(key) {
+    var g = dbGrupos[key];
+    var cotasKey = g.cotas.slice().sort().join(',');
+    // Skip if already in localStorage
+    if (localIds.indexOf(cotasKey) > -1) return;
+    dbVendas.push({
+      id: 'db_' + key,
+      nome: g.row.cliente_nome || '?',
+      empresa: g.row.cliente_empresa || '',
+      telefone: g.row.cliente_telefone || '',
+      cotas: g.cotas,
+      plano: g.row.plano || '',
+      tiragem: g.row.tiragem || '',
+      qtdeTiragens: 1,
+      status: g.row.status,
+      obs: g.row.obs || '',
+      valor: g.row.valor || 0,
+      valorBase: g.row.valor || 0,
+      valorTiragem: 0,
+      valorDesconto: 0,
+      data: g.row.updated_at || new Date().toISOString(),
+      _fromDB: true,
+    });
+  });
+
+  var todasVendas = vendas.concat(dbVendas);
+  let lista = todasVendas.filter(function(v) {
     if (filtroAtual !== 'todas' && v.status !== filtroAtual) return false;
-    if (busca && !v.nome.toLowerCase().includes(busca) && !(v.empresa||'').toLowerCase().includes(busca)) return false;
+    if (busca && !(v.nome||'').toLowerCase().includes(busca) && !(v.empresa||'').toLowerCase().includes(busca)) return false;
     return true;
-  }).slice().sort(function(a,b){ return b.id - a.id; });
+  }).slice().sort(function(a,b) {
+    var da = new Date(a.data).getTime();
+    var db2 = new Date(b.data).getTime();
+    return db2 - da;
+  });
   const el = document.getElementById('listaVendas');
   if (!el) return;
   if (lista.length === 0) {
