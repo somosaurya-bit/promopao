@@ -396,6 +396,18 @@
   <div id="cotasValorLista" style="background:var(--branco);border:1px solid var(--cinza-borda);border-radius:14px;padding:16px;"></div>
 </div>
 
+<!-- ABA: PENDENTES -->
+<div id="tab-pendentes" class="page">
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+    <div style="font-family:'Syne',sans-serif;font-size:15px;font-weight:700">Reservas pendentes</div>
+    <button onclick="sincronizar(function(){renderPendentes();showToast('Atualizado!','success');})" style="padding:8px 14px;border:1.5px solid var(--cinza-borda);border-radius:8px;background:white;font-size:12px;cursor:pointer">Atualizar</button>
+  </div>
+  <div style="background:#FFFBEA;border:1px solid #D4A800;border-radius:12px;padding:12px 14px;font-size:12px;color:#7A5C00;margin-bottom:14px;line-height:1.6">
+    Pedidos feitos pelo link do cliente aparecem aqui. Clique em <strong>Confirmar</strong> para marcar como vendida, ou <strong>Liberar</strong> para devolver a cota.
+  </div>
+  <div id="listaPendentes"></div>
+</div>
+
 <!-- MODAL COTA -->
 <div class="modal-overlay" id="modalCota" onclick="fecharModal('modalCota')">
   <div class="modal-box" onclick="event.stopPropagation()">
@@ -1178,6 +1190,33 @@ function carregarCustos() {
   if (c.frete)    document.getElementById('custFrete').value    = c.frete;
 }
 
+function todasVendasUnificadas() {
+  // Merge localStorage + Supabase (igual ao renderVendas)
+  var localIds = vendas.map(function(v){ return v.cotas.slice().sort().join(','); });
+  var dbVendas = [];
+  var dbGrupos = {};
+  Object.keys(cotasDB).forEach(function(cod) {
+    var row = cotasDB[cod];
+    if (row.status !== 'vendida' && row.status !== 'reservada') return;
+    var key = (row.cliente_nome||'?')+'||'+(row.cliente_telefone||'')+'||'+(row.plano||'');
+    if (!dbGrupos[key]) dbGrupos[key] = { row: row, cotas: [] };
+    dbGrupos[key].cotas.push(cod);
+  });
+  Object.keys(dbGrupos).forEach(function(key) {
+    var g = dbGrupos[key];
+    var cotasKey = g.cotas.slice().sort().join(',');
+    if (localIds.indexOf(cotasKey) > -1) return;
+    dbVendas.push({
+      id: 'db_'+key, nome: g.row.cliente_nome||'?',
+      empresa: g.row.cliente_empresa||'', telefone: g.row.cliente_telefone||'',
+      cotas: g.cotas, plano: g.row.plano||'', tiragem: g.row.tiragem||'',
+      status: g.row.status, valor: g.row.valor||0,
+      data: g.row.updated_at||new Date().toISOString(), _fromDB: true
+    });
+  });
+  return vendas.concat(dbVendas);
+}
+
 function renderFinanceiro() {
   carregarCustos();
   const custos = getCustos();
@@ -1185,26 +1224,43 @@ function renderFinanceiro() {
   const custDesigner = custos.designer || 0;
   const custFrete    = custos.frete    || 0;
   const totalCustos  = custTiragem + custDesigner + custFrete;
-  const totalVend = vendas.filter(function(v){ return v.status==='vendida'; }).reduce(function(s,v){ return s+v.valor; },0);
-  const totalRes  = vendas.filter(function(v){ return v.status==='reservada'; }).reduce(function(s,v){ return s+v.valor; },0);
+
+  // Usa fonte unificada (local + Supabase)
+  var todas = todasVendasUnificadas();
+  const totalVend = todas.filter(function(v){ return v.status==='vendida'; }).reduce(function(s,v){ return s+(v.valor||0); },0);
+  const totalRes  = todas.filter(function(v){ return v.status==='reservada'; }).reduce(function(s,v){ return s+(v.valor||0); },0);
   const totalGeral = totalVend + totalRes;
   const lucro = totalVend - totalCustos;
   const lucroComRes = totalGeral - totalCustos;
   const ocupadas = Object.keys(getCotasOcupadas()).length;
   const perc = Math.round(ocupadas/22*100);
   const lucroColor = lucro >= 0 ? 'var(--verde)' : 'var(--vermelho)';
+
   document.getElementById('resumoFinanceiro').innerHTML =
     '<div class="resumo-grid" style="margin-bottom:10px">'
     + '<div class="resumo-card destaque" style="grid-column:span 2"><div class="resumo-label">Receita confirmada (vendidas)</div><div class="resumo-valor">' + fmtMoeda(totalVend) + '</div></div>'
     + '<div class="resumo-card"><div class="resumo-label">Em reserva</div><div class="resumo-valor" style="color:var(--laranja);font-size:16px">' + fmtMoeda(totalRes) + '</div></div>'
     + '<div class="resumo-card"><div class="resumo-label">Cotas ocupadas</div><div class="resumo-valor" style="color:var(--marrom-medio);font-size:16px">' + ocupadas + '/22 <span style="font-size:11px;color:var(--texto-claro)">(' + perc + '%)</span></div></div>'
-    + '</div>';
+    + '</div>'
+    + (totalCustos > 0 ?
+      '<div style="background:var(--branco);border:1px solid var(--cinza-borda);border-radius:14px;padding:16px;margin-bottom:10px">'
+      + '<div style="font-size:13px;font-weight:700;color:var(--texto);margin-bottom:10px">Resultado financeiro</div>'
+      + '<div style="display:flex;justify-content:space-between;font-size:13px;padding:6px 0;border-bottom:0.5px solid var(--cinza-borda)"><span style="color:var(--texto-claro)">Receita confirmada</span><span style="font-weight:600;color:var(--verde)">' + fmtMoeda(totalVend) + '</span></div>'
+      + (totalRes > 0 ? '<div style="display:flex;justify-content:space-between;font-size:13px;padding:6px 0;border-bottom:0.5px solid var(--cinza-borda)"><span style="color:var(--texto-claro)">+ Reservas</span><span style="font-weight:600;color:var(--laranja)">' + fmtMoeda(totalRes) + '</span></div>' : '')
+      + (custTiragem > 0  ? '<div style="display:flex;justify-content:space-between;font-size:13px;padding:6px 0;border-bottom:0.5px solid var(--cinza-borda)"><span style="color:var(--texto-claro)">- Tiragem</span><span style="color:var(--vermelho)">' + fmtMoeda(custTiragem) + '</span></div>' : '')
+      + (custDesigner > 0 ? '<div style="display:flex;justify-content:space-between;font-size:13px;padding:6px 0;border-bottom:0.5px solid var(--cinza-borda)"><span style="color:var(--texto-claro)">- Designer</span><span style="color:var(--vermelho)">' + fmtMoeda(custDesigner) + '</span></div>' : '')
+      + (custFrete > 0    ? '<div style="display:flex;justify-content:space-between;font-size:13px;padding:6px 0;border-bottom:0.5px solid var(--cinza-borda)"><span style="color:var(--texto-claro)">- Frete</span><span style="color:var(--vermelho)">' + fmtMoeda(custFrete) + '</span></div>' : '')
+      + '<div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0 0"><span style="font-size:14px;font-weight:700">Lucro atual</span><span style="font-family:Syne,sans-serif;font-size:20px;font-weight:800;color:' + lucroColor + '">' + (lucro>=0?'+':'') + fmtMoeda(lucro) + '</span></div>'
+      + (totalRes > 0 ? '<div style="display:flex;justify-content:space-between;padding:4px 0 0"><span style="font-size:11px;color:var(--texto-claro)">Se reservas confirmarem</span><span style="font-size:13px;font-weight:700;color:' + (lucroComRes>=0?'var(--verde)':'var(--vermelho)') + '">' + (lucroComRes>=0?'+':'') + fmtMoeda(lucroComRes) + '</span></div>' : '')
+      + '</div>'
+    : '');
+
   const beBox = document.getElementById('breakEvenBox');
   if (beBox) beBox.style.display = 'none';
-  const cotasVendidas = vendas.filter(function(v){ return v.status==='vendida'; }).reduce(function(s,v){ return s+v.cotas.length; },0);
+
   const todos2 = PLANOS.concat(EXCLUSIVOS);
   const contPlano = {};
-  vendas.forEach(function(v){ contPlano[v.plano] = (contPlano[v.plano]||0)+1; });
+  todas.forEach(function(v){ contPlano[v.plano] = (contPlano[v.plano]||0)+1; });
   const maxQ = Math.max.apply(null, Object.values(contPlano).concat([1]));
   document.getElementById('chartPlanos').innerHTML = todos2.filter(function(p){ return contPlano[p.id]; }).map(function(p) {
     const qt = contPlano[p.id]||0;
@@ -1213,8 +1269,9 @@ function renderFinanceiro() {
       + '<div style="background:var(--cinza-bg);border-radius:6px;height:8px;overflow:hidden"><div style="width:' + Math.round(qt/maxQ*100) + '%;height:100%;background:var(--laranja);border-radius:6px"></div></div>'
       + '</div>';
   }).join('') || '<div style="color:var(--texto-claro);font-size:14px;text-align:center;padding:12px 0">Nenhuma venda ainda</div>';
+
   const vlrPorCota = {};
-  vendas.forEach(function(v){ v.cotas.forEach(function(c){ vlrPorCota[c] = { valor: v.valor/v.cotas.length, cliente: v.nome }; }); });
+  todas.forEach(function(v){ v.cotas.forEach(function(c){ vlrPorCota[c] = { valor: (v.valor||0)/v.cotas.length, cliente: v.nome }; }); });
   const {frente, verso} = buildCotasCodes();
   document.getElementById('cotasValorLista').innerHTML = frente.concat(verso).map(function(cod, i) {
     const info = vlrPorCota[cod];
