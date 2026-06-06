@@ -396,19 +396,6 @@
   <div id="cotasValorLista" style="background:var(--branco);border:1px solid var(--cinza-borda);border-radius:14px;padding:16px;"></div>
 </div>
 
-<!-- ABA: PENDENTES -->
-<div id="tab-pendentes" class="page">
-  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
-    <div style="font-family:'Syne',sans-serif;font-size:15px;font-weight:700">Reservas pendentes</div>
-    <button onclick="carregarCotasDB(function(){renderPendentes();showToast('Atualizado!','success');})" style="padding:8px 14px;border:1.5px solid var(--cinza-borda);border-radius:8px;background:white;font-size:12px;cursor:pointer">🔄 Atualizar</button>
-  </div>
-  <div style="background:#FFFBEA;border:1px solid #D4A800;border-radius:12px;padding:12px 14px;font-size:12px;color:#7A5C00;margin-bottom:14px;line-height:1.6">
-    <strong>Como funciona:</strong> Quando um cliente envia um pedido pela página de pedidos, as cotas ficam <strong>pendentes</strong> aqui. 
-    Use <strong>✓</strong> para confirmar como vendida, ou <strong>✕</strong> para liberar a cota de volta.
-  </div>
-  <div id="listaPendentes"></div>
-</div>
-
 <!-- MODAL COTA -->
 <div class="modal-overlay" id="modalCota" onclick="fecharModal('modalCota')">
   <div class="modal-box" onclick="event.stopPropagation()">
@@ -430,59 +417,75 @@
 <div class="toast" id="toast"></div>
 
 <script>
-// Polyfills para iOS Safari antigo
+// Polyfills
 if(!String.prototype.padStart){String.prototype.padStart=function(l,c){var s=String(this);c=c||' ';while(s.length<l)s=c+s;return s;};}
 if(!Array.prototype.find){Array.prototype.find=function(fn){for(var i=0;i<this.length;i++){if(fn(this[i],i,this))return this[i];}return undefined;};}
 if(!Array.prototype.findIndex){Array.prototype.findIndex=function(fn){for(var i=0;i<this.length;i++){if(fn(this[i],i,this))return i;}return -1;};}
 
-// ─── SUPABASE CONFIG ───
+// ── SUPABASE ──
 var SUPA_URL = 'https://hlmapyzaksffxgjgvtof.supabase.co';
 var SUPA_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImhsbWFweXpha3NmZnhnamd2dG9mIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODA2ODg4MTcsImV4cCI6MjA5NjI2NDgxN30.VAyv0bVY_AZR1wN9HpyOlG9lkztUNsB6L8fTYkW2QKc';
-
-function supaFetch(path, opts) {
-  var h = {'apikey':SUPA_KEY,'Authorization':'Bearer '+SUPA_KEY,'Content-Type':'application/json','Prefer':'return=minimal'};
-  if(opts && opts.headers) Object.keys(opts.headers).forEach(function(k){h[k]=opts.headers[k];});
-  return fetch(SUPA_URL+'/rest/v1/'+path, Object.assign({},opts||{},{headers:h}));
-}
-
-// cotasDB: { 'F01': { status, cliente_nome, cliente_empresa, cliente_telefone, plano, tiragem, obs, valor, updated_at } }
 var cotasDB = {};
 
-function carregarCotasDB(cb) {
+function supaFetch(path, opts) {
+  var h = {
+    'apikey': SUPA_KEY,
+    'Authorization': 'Bearer ' + SUPA_KEY,
+    'Content-Type': 'application/json',
+    'Prefer': 'return=minimal'
+  };
+  if (opts && opts.headers) Object.keys(opts.headers).forEach(function(k){ h[k] = opts.headers[k]; });
+  return fetch(SUPA_URL + '/rest/v1/' + path, Object.assign({}, opts || {}, { headers: h }));
+}
+
+function sincronizar(cb) {
   supaFetch('cotas?select=*')
-    .then(function(r){return r.json();})
-    .then(function(rows){
+    .then(function(r) { return r.json(); })
+    .then(function(rows) {
       cotasDB = {};
-      rows.forEach(function(r){ cotasDB[r.codigo] = r; });
-      if(cb) cb();
+      rows.forEach(function(r) { cotasDB[r.codigo] = r; });
+      if (cb) cb(); else renderAll();
     })
-    .catch(function(){ showToast('Erro ao sincronizar com banco','error'); if(cb) cb(); });
+    .catch(function() { showToast('Erro ao sincronizar', 'error'); if (cb) cb(); });
 }
 
-function supaUpdateCota(codigo, dados) {
-  return supaFetch('cotas?codigo=eq.'+codigo, {
-    method:'PATCH',
-    body: JSON.stringify(Object.assign({updated_at: new Date().toISOString()}, dados))
-  });
+function supaSetCota(cod, dados) {
+  dados.updated_at = new Date().toISOString();
+  return supaFetch('cotas?codigo=eq.' + cod, { method: 'PATCH', body: JSON.stringify(dados) });
 }
 
+function liberarCota(cod) {
+  if (!confirm('Liberar cota ' + cod + ' e remover reserva?')) return;
+  supaSetCota(cod, { status: 'disponivel', cliente_nome: null, cliente_empresa: null, cliente_telefone: null, plano: null, tiragem: null, obs: null, valor: null })
+    .then(function() { sincronizar(function() { renderAll(); showToast('Cota ' + cod + ' liberada', 'success'); }); })
+    .catch(function() { showToast('Erro ao liberar', 'error'); });
+}
+
+function confirmarPendente(cod) {
+  if (!confirm('Confirmar cota ' + cod + ' como VENDIDA?')) return;
+  supaSetCota(cod, { status: 'vendida' })
+    .then(function() { sincronizar(function() { renderAll(); showToast('Cota ' + cod + ' confirmada!', 'success'); }); })
+    .catch(function() { showToast('Erro ao confirmar', 'error'); });
+}
+
+// ── DADOS ──
 const PLANOS = [
-  { id:'essencial',   nome:'Essencial',      cotas:1,  preco:350,  desconto:0,  desc:'Ideal para começar.' },
-  { id:'destaque',    nome:'Destaque',        cotas:2,  preco:630,  desconto:10, precoOriginal:700,  desc:'Aparece 2x no saco.' },
-  { id:'dominancia',  nome:'Dominância',      cotas:4,  preco:1190, desconto:15, precoOriginal:1400, desc:'⭐ Mais escolhido' },
-  { id:'visibilidade',nome:'Visibilidade',    cotas:6,  preco:1715, desconto:18, precoOriginal:2100, desc:'Mais presença.' },
-  { id:'supervis',    nome:'Super Visib.',    cotas:8,  preco:2240, desconto:20, precoOriginal:2800, desc:'Grande evidência.' },
+  { id:'essencial',    nome:'Essencial',      cotas:1,  preco:350,  desconto:0,  desc:'Ideal para comecar.' },
+  { id:'destaque',     nome:'Destaque',        cotas:2,  preco:630,  desconto:10, precoOriginal:700,  desc:'Aparece 2x no saco.' },
+  { id:'dominancia',   nome:'Dominancia',      cotas:4,  preco:1190, desconto:15, precoOriginal:1400, desc:'Mais escolhido' },
+  { id:'visibilidade', nome:'Visibilidade',    cotas:6,  preco:1715, desconto:18, precoOriginal:2100, desc:'Mais presenca.' },
+  { id:'supervis',     nome:'Super Visib.',    cotas:8,  preco:2240, desconto:20, precoOriginal:2800, desc:'Grande evidencia.' },
 ];
 const EXCLUSIVOS = [
-  { id:'frente_excl', nome:'Frente Exclusiva',   cotas:8,  preco:2240, desc:'Único na frente.', exclusivo:true, codigoFixo:'frente' },
-  { id:'verso_excl',  nome:'Verso Exclusivo',     cotas:14, preco:3920, desc:'Único no verso.',  exclusivo:true, codigoFixo:'verso' },
-  { id:'saquinho',    nome:'Saquinho Completo',   cotas:22, preco:5600, desc:'Domínio total!',   exclusivo:true, codigoFixo:'tudo' },
+  { id:'frente_excl', nome:'Frente Exclusiva',  cotas:8,  preco:2240, desc:'Unico na frente.', exclusivo:true, codigoFixo:'frente' },
+  { id:'verso_excl',  nome:'Verso Exclusivo',    cotas:14, preco:3920, desc:'Unico no verso.',  exclusivo:true, codigoFixo:'verso' },
+  { id:'saquinho',    nome:'Saquinho Completo',  cotas:22, preco:5600, desc:'Dominio total!',   exclusivo:true, codigoFixo:'tudo' },
 ];
 const TIRAGENS_INFO = {
   nenhum:      { nome:'Sem pacote',   sacos:0,      tiragens:0 },
-  basico:      { nome:'Básico',       sacos:10000,  tiragens:1  },
-  economico:   { nome:'Econômico',    sacos:30000,  tiragens:3  },
-  estrategico: { nome:'Estratégico',  sacos:60000,  tiragens:6  },
+  basico:      { nome:'Basico',       sacos:10000,  tiragens:1 },
+  economico:   { nome:'Economico',    sacos:30000,  tiragens:3 },
+  estrategico: { nome:'Estrategico',  sacos:60000,  tiragens:6 },
   max:         { nome:'Max',          sacos:120000, tiragens:12 },
 };
 
@@ -503,24 +506,21 @@ function fmtSacos(n) { return n >= 1000 ? (n/1000).toLocaleString('pt-BR') + 'k'
 
 function getCotasOcupadas() {
   var map = {};
-  // vendas locais (legado)
-  vendas.forEach(function(v){ v.cotas.forEach(function(c){ map[c] = v; }); });
-  // banco remoto sobrescreve (fonte de verdade)
-  Object.keys(cotasDB).forEach(function(cod){
+  vendas.forEach(function(v) { v.cotas.forEach(function(c) { map[c] = v; }); });
+  Object.keys(cotasDB).forEach(function(cod) {
     var row = cotasDB[cod];
-    if(row.status === 'vendida' || row.status === 'pendente' || row.status === 'reservada') {
+    if (row.status === 'vendida' || row.status === 'pendente' || row.status === 'reservada') {
       map[cod] = {
-        nome: row.cliente_nome || '—',
-        empresa: row.cliente_empresa || '—',
-        telefone: row.cliente_telefone || '—',
+        nome: row.cliente_nome || '?',
+        empresa: row.cliente_empresa || '?',
+        telefone: row.cliente_telefone || '',
         status: row.status,
-        plano: row.plano || '—',
-        tiragem: row.tiragem || '—',
+        plano: row.plano || '',
+        tiragem: row.tiragem || '',
         obs: row.obs || '',
         valor: row.valor || 0,
         cotas: [cod],
-        _fromDB: true,
-        _codigo: cod,
+        _fromDB: true
       };
     }
   });
@@ -529,71 +529,67 @@ function getCotasOcupadas() {
 
 function buildCotasCodes() {
   const f = [], v = [];
-  for(let i=1;i<=8;i++)  f.push('F'+String(i).padStart(2,'0'));
-  for(let i=1;i<=14;i++) v.push('V'+String(i).padStart(2,'0'));
-  return {frente:f, verso:v};
+  for (let i = 1; i <= 8;  i++) f.push('F' + String(i).padStart(2,'0'));
+  for (let i = 1; i <= 14; i++) v.push('V' + String(i).padStart(2,'0'));
+  return { frente: f, verso: v };
 }
 
-/* ── GRIDS DO SAQUINHO (sempre 2 colunas) ── */
 function renderGrids() {
   const {frente, verso} = buildCotasCodes();
   const mapa = getCotasOcupadas();
   function slot(cod, num) {
     const vd = mapa[cod];
     const st = vd ? vd.status : 'disponivel';
-    return `<div class="cota-slot ${st}" onclick="abrirCota('${cod}')">
-      <div class="cota-status-dot dot-${st}"></div>
-      <div class="cota-num">${num}</div>
-      ${vd ? `<div class="cota-cliente">${vd.empresa||vd.nome}</div>` : ''}
-    </div>`;
+    return '<div class="cota-slot ' + st + '" onclick="abrirCota(\'' + cod + '\')">'
+      + '<div class="cota-status-dot dot-' + st + '"></div>'
+      + '<div class="cota-num">' + num + '</div>'
+      + (vd ? '<div class="cota-cliente">' + (vd.empresa || vd.nome) + '</div>' : '')
+      + '</div>';
   }
-  document.getElementById('gridFrente').innerHTML = frente.map((c,i) => slot(c,String(i+1).padStart(2,'0'))).join('');
-  document.getElementById('gridVerso').innerHTML  = verso.map((c,i)  => slot(c,String(i+1).padStart(2,'0'))).join('');
+  document.getElementById('gridFrente').innerHTML = frente.map(function(c,i){ return slot(c, String(i+1).padStart(2,'0')); }).join('');
+  document.getElementById('gridVerso').innerHTML  = verso.map(function(c,i){  return slot(c, String(i+1).padStart(2,'0')); }).join('');
 }
 
 function renderStats() {
   var mapa = getCotasOcupadas();
-  var ven=0, res=0, pend=0;
-  Object.keys(mapa).forEach(function(k){
-    var v=mapa[k];
-    if(v.status==='vendida') ven++;
-    else if(v.status==='pendente') pend++;
+  var ven = 0, res = 0, pend = 0;
+  Object.keys(mapa).forEach(function(k) {
+    var v = mapa[k];
+    if (v.status === 'vendida') ven++;
+    else if (v.status === 'pendente') pend++;
     else res++;
   });
   document.getElementById('statVendidas').textContent    = ven;
   document.getElementById('statDisponiveis').textContent = 22 - ven - res - pend;
   document.getElementById('statReservadas').textContent  = res + pend;
-  document.getElementById('headerBadge').textContent     = ven + ' / 22 vendidas' + (pend>0?' · '+pend+' pendente'+(pend>1?'s':''):'');
+  document.getElementById('headerBadge').textContent     = ven + ' / 22 vendidas' + (pend > 0 ? ' · ' + pend + ' pendente' + (pend > 1 ? 's' : '') : '');
 }
 
-/* ── PLANOS ── */
 function renderPlanosGrid() {
   const todos = PLANOS.concat(EXCLUSIVOS);
-  document.getElementById('planosGrid').innerHTML = todos.map(p => {
+  document.getElementById('planosGrid').innerHTML = todos.map(function(p) {
     const isSel = planoSelecionado === p.id;
-    return `<div class="plano-card ${isSel?'selected':''} ${p.exclusivo?'exclusivo':''}" onclick="selectPlano('${p.id}')" style="position:relative">
-      ${p.id==='dominancia' ? '<div class="plano-badge-mais">mais escolhido</div>' : ''}
-      <div class="plano-nome">${p.nome}</div>
-      <div class="plano-cotas">${p.cotas} cota${p.cotas>1?'s':''}</div>
-      ${p.precoOriginal ? `<div><span class="plano-preco-riscado">${fmtMoeda(p.precoOriginal)}</span><span style="background:var(--laranja);color:white;font-size:9px;padding:1px 5px;border-radius:4px">${p.desconto}% off</span></div>` : ''}
-      <div class="plano-preco">${fmtMoeda(p.preco)}</div>
-      <div class="plano-desc">${p.desc}</div>
-    </div>`;
+    return '<div class="plano-card ' + (isSel ? 'selected ' : '') + (p.exclusivo ? 'exclusivo' : '') + '" onclick="selectPlano(\'' + p.id + '\')" style="position:relative">'
+      + (p.id === 'dominancia' ? '<div class="plano-badge-mais">mais escolhido</div>' : '')
+      + '<div class="plano-nome">' + p.nome + '</div>'
+      + '<div class="plano-cotas">' + p.cotas + ' cota' + (p.cotas > 1 ? 's' : '') + '</div>'
+      + (p.precoOriginal ? '<div><span class="plano-preco-riscado">' + fmtMoeda(p.precoOriginal) + '</span><span style="background:var(--laranja);color:white;font-size:9px;padding:1px 5px;border-radius:4px">' + p.desconto + '% off</span></div>' : '')
+      + '<div class="plano-preco">' + fmtMoeda(p.preco) + '</div>'
+      + '<div class="plano-desc">' + p.desc + '</div>'
+      + '</div>';
   }).join('');
 }
 
-/* ── PICKER DE COTAS (2 colunas, layout saquinho, com travamento por plano) ── */
 function renderCotasPicker() {
   const {frente, verso} = buildCotasCodes();
   const mapa = getCotasOcupadas();
   const todos = PLANOS.concat(EXCLUSIVOS);
-  const plano = todos.filter(function(p){return p.id===planoSelecionado;})[0];
-
+  const plano = todos.filter(function(p){ return p.id === planoSelecionado; })[0];
   const aviso = document.getElementById('avisoTrava');
   const title = document.getElementById('cotasPickerTitle');
   const inner = document.getElementById('cotasPickerInner');
 
-  if(!plano) {
+  if (!plano) {
     title.textContent = 'Selecione o plano para escolher as cotas';
     aviso.classList.remove('show');
     inner.innerHTML = '';
@@ -601,74 +597,67 @@ function renderCotasPicker() {
     return;
   }
 
-  // Exclusivos: auto-seleciona cotas e bloqueia edição
-  if(plano.exclusivo) {
-    if(plano.codigoFixo === 'frente')  cotasSelecionadas = frente.slice();
-    if(plano.codigoFixo === 'verso')   cotasSelecionadas = verso.slice();
-    if(plano.codigoFixo === 'tudo')    cotasSelecionadas = frente.concat(verso);
-
-    title.textContent = `${plano.cotas} cotas selecionadas automaticamente`;
-    aviso.textContent = `✓ Plano ${plano.nome}: todas as cotas do ${plano.codigoFixo==='frente'?'frente':plano.codigoFixo==='verso'?'verso':'saquinho'} são selecionadas automaticamente.`;
+  if (plano.exclusivo) {
+    if (plano.codigoFixo === 'frente') cotasSelecionadas = frente.slice();
+    if (plano.codigoFixo === 'verso')  cotasSelecionadas = verso.slice();
+    if (plano.codigoFixo === 'tudo')   cotasSelecionadas = frente.concat(verso);
+    title.textContent = plano.cotas + ' cotas selecionadas automaticamente';
+    aviso.textContent = 'Plano ' + plano.nome + ': cotas do ' + (plano.codigoFixo === 'frente' ? 'frente' : plano.codigoFixo === 'verso' ? 'verso' : 'saquinho') + ' selecionadas automaticamente.';
     aviso.classList.add('show');
-
     function chipFixo(cod, num, lado) {
-      return `<div class="cota-chip selecionada" style="cursor:default">
-        <span class="chip-num">${num}</span><span class="chip-lado">${lado}</span>
-      </div>`;
+      return '<div class="cota-chip selecionada" style="cursor:default">'
+        + '<span class="chip-num">' + num + '</span>'
+        + '<span class="chip-lado">' + lado + '</span>'
+        + '</div>';
     }
-    let innerHtml = '';
-    if(plano.codigoFixo === 'verso') {
-      innerHtml = `<div class="picker-lado-label">VERSO</div><div class="picker-grid-2col">${verso.map((c,i)=>chipFixo(c,String(i+1).padStart(2,'0'),'V')).join('')}</div>`;
-    } else if(plano.codigoFixo === 'frente') {
-      innerHtml = `<div class="picker-lado-label">FRENTE</div><div class="picker-grid-2col">${frente.map((c,i)=>chipFixo(c,String(i+1).padStart(2,'0'),'F')).join('')}</div>`;
+    let html = '';
+    if (plano.codigoFixo === 'verso') {
+      html = '<div class="picker-lado-label">VERSO</div><div class="picker-grid-2col">' + verso.map(function(c,i){ return chipFixo(c, String(i+1).padStart(2,'0'), 'V'); }).join('') + '</div>';
+    } else if (plano.codigoFixo === 'frente') {
+      html = '<div class="picker-lado-label">FRENTE</div><div class="picker-grid-2col">' + frente.map(function(c,i){ return chipFixo(c, String(i+1).padStart(2,'0'), 'F'); }).join('') + '</div>';
     } else {
-      innerHtml = `<div class="picker-lado-label">FRENTE</div><div class="picker-grid-2col">${frente.map((c,i)=>chipFixo(c,String(i+1).padStart(2,'0'),'F')).join('')}</div>` +
-        `<div class="picker-lado-label" style="margin-top:12px">VERSO</div><div class="picker-grid-2col">${verso.map((c,i)=>chipFixo(c,String(i+1).padStart(2,'0'),'V')).join('')}</div>`;
+      html = '<div class="picker-lado-label">FRENTE</div><div class="picker-grid-2col">' + frente.map(function(c,i){ return chipFixo(c, String(i+1).padStart(2,'0'), 'F'); }).join('') + '</div>'
+           + '<div class="picker-lado-label" style="margin-top:12px">VERSO</div><div class="picker-grid-2col">' + verso.map(function(c,i){ return chipFixo(c, String(i+1).padStart(2,'0'), 'V'); }).join('') + '</div>';
     }
-    inner.innerHTML = innerHtml;
-
+    inner.innerHTML = html;
     atualizarResumo();
     return;
   }
 
-  // Planos normais: limitar seleção ao número de cotas do plano
   const max = plano.cotas;
   aviso.classList.remove('show');
-  // Se já havia mais cotas selecionadas que o plano permite, truncar
-  if(cotasSelecionadas.length > max) {
-    cotasSelecionadas = cotasSelecionadas.slice(0, max);
-  }
-
-  title.textContent = `Escolha ${max} cota${max>1?'s':''} (${cotasSelecionadas.length}/${max} selecionada${max>1?'s':''})`;
+  if (cotasSelecionadas.length > max) cotasSelecionadas = cotasSelecionadas.slice(0, max);
+  title.textContent = 'Escolha ' + max + ' cota' + (max > 1 ? 's' : '') + ' (' + cotasSelecionadas.length + '/' + max + ' selecionada' + (max > 1 ? 's' : '') + ')';
 
   function chip(cod, num, lado) {
     const ocup = !!mapa[cod];
     const sel  = cotasSelecionadas.includes(cod);
     const cheio = !sel && cotasSelecionadas.length >= max;
     const cls = ocup ? 'indisponivel' : sel ? 'selecionada' : cheio ? 'travada' : '';
-    const clk = (ocup || cheio) ? '' : `toggleCota('${cod}')`;
-    return `<div class="cota-chip ${cls}" onclick="${clk}">
-      <span class="chip-num">${num}</span><span class="chip-lado">${lado}</span>
-    </div>`;
+    const clk = (ocup || cheio) ? '' : 'toggleCota(\'' + cod + '\')';
+    return '<div class="cota-chip ' + cls + '" onclick="' + clk + '">'
+      + '<span class="chip-num">' + num + '</span>'
+      + '<span class="chip-lado">' + lado + '</span>'
+      + '</div>';
   }
 
   inner.innerHTML =
-    `<div class="picker-lado-label">FRENTE</div><div class="picker-grid-2col">${frente.map((c,i)=>chip(c,String(i+1).padStart(2,'0'),'F')).join('')}</div>` +
-    `<div class="picker-lado-label" style="margin-top:12px">VERSO</div><div class="picker-grid-2col">${verso.map((c,i)=>chip(c,String(i+1).padStart(2,'0'),'V')).join('')}</div>`;
+    '<div class="picker-lado-label">FRENTE</div><div class="picker-grid-2col">' + frente.map(function(c,i){ return chip(c, String(i+1).padStart(2,'0'), 'F'); }).join('') + '</div>'
+  + '<div class="picker-lado-label" style="margin-top:12px">VERSO</div><div class="picker-grid-2col">' + verso.map(function(c,i){ return chip(c, String(i+1).padStart(2,'0'), 'V'); }).join('') + '</div>';
 
   atualizarResumo();
 }
 
 function toggleCota(cod) {
-  if(getCotasOcupadas()[cod]) return;
+  if (getCotasOcupadas()[cod]) return;
   const todos = PLANOS.concat(EXCLUSIVOS);
-  const plano = todos.filter(function(p){return p.id===planoSelecionado;})[0];
-  if(!plano || plano.exclusivo) return;
+  const plano = todos.filter(function(p){ return p.id === planoSelecionado; })[0];
+  if (!plano || plano.exclusivo) return;
   const idx = cotasSelecionadas.indexOf(cod);
-  if(idx > -1) {
+  if (idx > -1) {
     cotasSelecionadas.splice(idx, 1);
   } else {
-    if(cotasSelecionadas.length >= plano.cotas) return;
+    if (cotasSelecionadas.length >= plano.cotas) return;
     cotasSelecionadas.push(cod);
   }
   renderCotasPicker();
@@ -677,23 +666,20 @@ function toggleCota(cod) {
 function selectPlano(id) {
   const antes = planoSelecionado;
   planoSelecionado = id;
-  // Limpar seleção ao trocar de plano
-  if(antes !== id) cotasSelecionadas = [];
+  if (antes !== id) cotasSelecionadas = [];
   renderPlanosGrid();
   renderCotasPicker();
 }
 
-/* ── TIRAGENS ── */
 function selectTiragem(btn, val) {
   tiragemSelecionada = val;
   const t = TIRAGENS_INFO[val];
-  // Inicializa com o total de tiragens do pacote (ex: Econômico=3)
   qtdeTiragens = t.tiragens || 1;
   document.getElementById('qtdeTiragemVal').textContent = qtdeTiragens;
   document.querySelectorAll('.tiragem-card').forEach(function(b) { b.classList.remove('active'); });
   btn.classList.add('active');
   var rowQtde = document.getElementById('rowQtdeTiragens');
-  if(val === 'nenhum') {
+  if (val === 'nenhum') {
     rowQtde.style.display = 'none';
   } else {
     rowQtde.style.display = 'block';
@@ -713,48 +699,44 @@ function ajustarTiragens(delta) {
 
 function atualizarLabelTiragem() {
   var t = TIRAGENS_INFO[tiragemSelecionada];
-  if(!t || t.sacos===0) return;
+  if (!t || t.sacos === 0) return;
   var sacosPorTiragem = t.sacos / t.tiragens;
   var totalSacos = sacosPorTiragem * qtdeTiragens;
   document.getElementById('qtdeTiragemLabel').textContent =
     qtdeTiragens + ' tiragem' + (qtdeTiragens > 1 ? 's' : '') + ' · ' + fmtSacos(totalSacos) + ' sacos';
 }
 
-/* ── DESCONTO ── */
 function setDescontoTipo(tipo) {
   descontoTipo = tipo;
-  document.getElementById('dtipoR').classList.toggle('active', tipo==='R$');
-  document.getElementById('dtipoP').classList.toggle('active', tipo==='%');
+  document.getElementById('dtipoR').classList.toggle('active', tipo === 'R$');
+  document.getElementById('dtipoP').classList.toggle('active', tipo === '%');
   atualizarResumo();
 }
 
-/* ── CÁLCULO E RESUMO ── */
 function calcBase() {
   const todos = PLANOS.concat(EXCLUSIVOS);
-  const plano = todos.filter(function(p){return p.id===planoSelecionado;})[0];
-  if(!plano || cotasSelecionadas.length===0) return 0;
+  const plano = todos.filter(function(p){ return p.id === planoSelecionado; })[0];
+  if (!plano || cotasSelecionadas.length === 0) return 0;
   return (plano.preco / plano.cotas) * cotasSelecionadas.length;
 }
 
 function calcTiragem() {
-  // O valor do plano já inclui 1 tiragem. Tiragens extras custam o mesmo valor base cada.
-  if(tiragemSelecionada==='nenhum' || qtdeTiragens <= 1) return 0;
+  if (tiragemSelecionada === 'nenhum' || qtdeTiragens <= 1) return 0;
   const base = calcBase();
-  if(base===0) return 0;
+  if (base === 0) return 0;
   return base * (qtdeTiragens - 1);
 }
 
 function calcDesconto(base) {
   var el = document.getElementById('inputDesconto');
   var d = el ? (parseFloat(el.value) || 0) : 0;
-  if(d <= 0) return 0;
-  if(descontoTipo==='%') return base * (d/100);
+  if (d <= 0) return 0;
+  if (descontoTipo === '%') return base * (d / 100);
   return Math.min(d, base);
 }
 
 function calcTotal() {
   const base = calcBase();
-  // Total bruto = base × qtdeTiragens (já que 1 tiragem está inclusa no base)
   const subtotal = tiragemSelecionada !== 'nenhum' ? base * qtdeTiragens : base;
   const desc = calcDesconto(subtotal);
   return Math.max(0, subtotal - desc);
@@ -762,68 +744,49 @@ function calcTotal() {
 
 function atualizarResumo() {
   const todos = PLANOS.concat(EXCLUSIVOS);
-  const plano = todos.filter(function(p){return p.id===planoSelecionado;})[0];
+  const plano = todos.filter(function(p){ return p.id === planoSelecionado; })[0];
   const base = calcBase();
   const el = document.getElementById('resumoVenda');
-
-  if(!plano || base===0) { el.style.display='none'; return; }
-
+  if (!plano || base === 0) { el.style.display = 'none'; return; }
   const tiragemVal = calcTiragem();
   const subtotal = tiragemSelecionada !== 'nenhum' ? base * qtdeTiragens : base;
   const desc = calcDesconto(subtotal);
   const total = Math.max(0, subtotal - desc);
-
   const tirando = tiragemSelecionada !== 'nenhum' && qtdeTiragens > 1;
-
   let linhas = '';
-
-  if(tirando) {
-    // Mostrar como: "Plano · N cotas × N tiragens"
+  if (tirando) {
     const t = TIRAGENS_INFO[tiragemSelecionada];
-    linhas += `<div class="resumo-linha">
-      <span>${plano.nome} · ${cotasSelecionadas.length} cota${cotasSelecionadas.length>1?'s':''} × ${qtdeTiragens} tiragens (${t.nome})</span>
-      <span>${fmtMoeda(total + desc)}</span>
-    </div>`;
+    linhas += '<div class="resumo-linha"><span>' + plano.nome + ' · ' + cotasSelecionadas.length + ' cota' + (cotasSelecionadas.length > 1 ? 's' : '') + ' x ' + qtdeTiragens + ' tiragens (' + t.nome + ')</span><span>' + fmtMoeda(total + desc) + '</span></div>';
   } else {
-    linhas += `<div class="resumo-linha">
-      <span>${plano.nome} · ${cotasSelecionadas.length} cota${cotasSelecionadas.length>1?'s':''}${tiragemSelecionada!=='nenhum'?' · '+TIRAGENS_INFO[tiragemSelecionada].nome:''}</span>
-      <span>${fmtMoeda(base)}</span>
-    </div>`;
+    linhas += '<div class="resumo-linha"><span>' + plano.nome + ' · ' + cotasSelecionadas.length + ' cota' + (cotasSelecionadas.length > 1 ? 's' : '') + (tiragemSelecionada !== 'nenhum' ? ' · ' + TIRAGENS_INFO[tiragemSelecionada].nome : '') + '</span><span>' + fmtMoeda(base) + '</span></div>';
   }
-
-  if(desc > 0) {
-    linhas += `<div class="resumo-linha">
-      <span>Desconto</span>
-      <span class="desconto-tag">− ${fmtMoeda(desc)}</span>
-    </div>`;
+  if (desc > 0) {
+    linhas += '<div class="resumo-linha"><span>Desconto</span><span class="desconto-tag">- ' + fmtMoeda(desc) + '</span></div>';
   }
-  linhas += `<div class="resumo-linha total"><span>Total</span><span>${fmtMoeda(total)}</span></div>`;
-
+  linhas += '<div class="resumo-linha total"><span>Total</span><span>' + fmtMoeda(total) + '</span></div>';
   document.getElementById('resumoLinhas').innerHTML = linhas;
   el.style.display = 'block';
 }
 
-/* ── REGISTRAR VENDA ── */
 function registrarVenda() {
   const nome = document.getElementById('inputNome').value.trim();
-  if(!nome) { showToast('Informe o nome do cliente', 'error'); return; }
-  if(!planoSelecionado) { showToast('Selecione um plano', 'error'); return; }
-  if(cotasSelecionadas.length===0) { showToast('Selecione ao menos uma cota', 'error'); return; }
+  if (!nome) { showToast('Informe o nome do cliente', 'error'); return; }
+  if (!planoSelecionado) { showToast('Selecione um plano', 'error'); return; }
+  if (cotasSelecionadas.length === 0) { showToast('Selecione ao menos uma cota', 'error'); return; }
   const todos = PLANOS.concat(EXCLUSIVOS);
-  const plano = todos.filter(function(p){return p.id===planoSelecionado;})[0];
-  if(!plano.exclusivo && cotasSelecionadas.length < plano.cotas) {
-    if(!confirm(`Você selecionou ${cotasSelecionadas.length} de ${plano.cotas} cotas do plano. Registrar assim mesmo?`)) return;
+  const plano = todos.filter(function(p){ return p.id === planoSelecionado; })[0];
+  if (!plano.exclusivo && cotasSelecionadas.length < plano.cotas) {
+    if (!confirm('Voce selecionou ' + cotasSelecionadas.length + ' de ' + plano.cotas + ' cotas do plano. Registrar assim mesmo?')) return;
   }
-
   const venda = {
     id: Date.now(),
-    nome,
+    nome: nome,
     empresa:  document.getElementById('inputEmpresa').value.trim(),
     telefone: document.getElementById('inputTelefone').value.trim(),
     cotas: cotasSelecionadas.slice(),
     plano: planoSelecionado,
     tiragem: tiragemSelecionada,
-    qtdeTiragens,
+    qtdeTiragens: qtdeTiragens,
     status: document.getElementById('inputStatus').value,
     obs: document.getElementById('inputObs').value.trim(),
     valorBase: calcBase(),
@@ -832,39 +795,34 @@ function registrarVenda() {
     valor: calcTotal(),
     data: new Date().toISOString(),
   };
-
   vendas.push(venda);
   salvar();
-
-  // Gravar no Supabase
-  var planoNomeDB = (PLANOS.concat(EXCLUSIVOS).filter(function(p){return p.id===venda.plano;})[0]||{}).nome || venda.plano;
-  var tNome = (TIRAGENS_INFO[venda.tiragem]||{}).nome || venda.tiragem;
-  Promise.all(venda.cotas.map(function(cod){
-    return supaUpdateCota(cod, {
-      status: venda.status === 'reservada' ? 'reservada' : 'vendida',
+  var planoNome = plano.nome;
+  var tNome = (TIRAGENS_INFO[venda.tiragem] || {}).nome || venda.tiragem;
+  var novoStatus = venda.status === 'reservada' ? 'reservada' : 'vendida';
+  Promise.all(venda.cotas.map(function(cod) {
+    return supaSetCota(cod, {
+      status: novoStatus,
       cliente_nome: venda.nome,
       cliente_empresa: venda.empresa,
       cliente_telefone: venda.telefone,
-      plano: planoNomeDB,
+      plano: planoNome,
       tiragem: tNome,
       obs: venda.obs,
-      valor: venda.valor,
+      valor: venda.valor
     });
-  })).then(function(){
-    carregarCotasDB(function(){ renderAll(); });
-    showToast('Venda registrada! ✅', 'success');
-  }).catch(function(){
-    showToast('Venda salva localmente (erro no banco)', 'error');
-    renderAll();
+  })).then(function() {
+    sincronizar(function() { renderAll(); showToast('Venda registrada!', 'success'); });
+  }).catch(function() {
+    renderAll(); showToast('Salvo localmente (erro no banco)', 'error');
   });
-
   limparFormulario();
 }
 
 function limparFormulario() {
   ['inputNome','inputEmpresa','inputTelefone','inputObs','inputDesconto'].forEach(function(id){
     var el = document.getElementById(id);
-    if(el) el.value = '';
+    if (el) el.value = '';
   });
   document.getElementById('inputStatus').value = 'vendida';
   cotasSelecionadas = [];
@@ -874,50 +832,48 @@ function limparFormulario() {
   descontoTipo = 'R$';
   document.getElementById('rowQtdeTiragens').style.display = 'none';
   var tirCards = Array.prototype.slice.call(document.querySelectorAll('.tiragem-card'));
-  tirCards.forEach(function(b,i){ b.classList.toggle('active', i===0); });
+  tirCards.forEach(function(b, i){ b.classList.toggle('active', i === 0); });
   document.getElementById('dtipoR').classList.add('active');
   document.getElementById('dtipoP').classList.remove('active');
   renderPlanosGrid();
   renderCotasPicker();
 }
 
-/* ── LISTA DE VENDAS ── */
 function renderVendas() {
   var siEl = document.getElementById('searchInput');
   var busca = (siEl ? siEl.value : '').toLowerCase();
-  let lista = vendas.filter(v => {
-    if(filtroAtual!=='todas' && v.status!==filtroAtual) return false;
-    if(busca && !v.nome.toLowerCase().includes(busca) && !(v.empresa||'').toLowerCase().includes(busca)) return false;
+  let lista = vendas.filter(function(v) {
+    if (filtroAtual !== 'todas' && v.status !== filtroAtual) return false;
+    if (busca && !v.nome.toLowerCase().includes(busca) && !(v.empresa||'').toLowerCase().includes(busca)) return false;
     return true;
-  }).slice().sort((a,b) => b.id - a.id);
-
+  }).slice().sort(function(a,b){ return b.id - a.id; });
   const el = document.getElementById('listaVendas');
-  if(!el) return;
-  if(lista.length===0) {
-    el.innerHTML = `<div class="empty-state"><div class="empty-icon">📦</div><div class="empty-text">Nenhuma venda encontrada</div></div>`;
+  if (!el) return;
+  if (lista.length === 0) {
+    el.innerHTML = '<div class="empty-state"><div class="empty-icon">📦</div><div class="empty-text">Nenhuma venda encontrada</div></div>';
     return;
   }
   const cores = ['#E85D04','#1B7A4A','#7A3B10','#185FA5','#993556'];
-  el.innerHTML = lista.map(v => {
+  el.innerHTML = lista.map(function(v) {
     const ini = (v.nome||'?').substring(0,2).toUpperCase();
     const cor = cores[v.id % cores.length];
-    return `<div class="venda-card">
-      <div class="venda-avatar" style="background:${cor}">${ini}</div>
-      <div class="venda-info">
-        <div class="venda-nome">${v.nome}</div>
-        <div class="venda-empresa">${v.empresa||'—'} · ${v.telefone||'—'}</div>
-        <div class="venda-cotas-list">${v.cotas.map(c=>`<span class="venda-cota-badge">${c}</span>`).join('')}</div>
-        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-          <div class="venda-valor">${fmtMoeda(v.valor)}</div>
-          <span class="${v.status==='vendida'?'tag-vendida':'tag-reservada'}">${v.status==='vendida'?'Vendida':'Reservada'}</span>
-        </div>
-        <div class="venda-data">${fmtData(v.data)}</div>
-      </div>
-      <div class="venda-actions">
-        <button class="btn-danger" onclick="excluirVenda(${v.id})">✕</button>
-        <button style="padding:8px 10px;border:1px solid var(--cinza-borda);border-radius:8px;background:white;font-size:12px;cursor:pointer" onclick="abrirVenda(${v.id})">ver</button>
-      </div>
-    </div>`;
+    return '<div class="venda-card">'
+      + '<div class="venda-avatar" style="background:' + cor + '">' + ini + '</div>'
+      + '<div class="venda-info">'
+        + '<div class="venda-nome">' + v.nome + '</div>'
+        + '<div class="venda-empresa">' + (v.empresa||'—') + ' · ' + (v.telefone||'—') + '</div>'
+        + '<div class="venda-cotas-list">' + v.cotas.map(function(c){ return '<span class="venda-cota-badge">' + c + '</span>'; }).join('') + '</div>'
+        + '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">'
+          + '<div class="venda-valor">' + fmtMoeda(v.valor) + '</div>'
+          + '<span class="' + (v.status==='vendida'?'tag-vendida':'tag-reservada') + '">' + (v.status==='vendida'?'Vendida':'Reservada') + '</span>'
+        + '</div>'
+        + '<div class="venda-data">' + fmtData(v.data) + '</div>'
+      + '</div>'
+      + '<div class="venda-actions">'
+        + '<button class="btn-danger" onclick="excluirVenda(' + v.id + ')">x</button>'
+        + '<button style="padding:8px 10px;border:1px solid var(--cinza-borda);border-radius:8px;background:white;font-size:12px;cursor:pointer" onclick="abrirVenda(' + v.id + ')">ver</button>'
+      + '</div>'
+      + '</div>';
   }).join('');
 }
 
@@ -929,85 +885,62 @@ function setFiltro(f, btn) {
 }
 
 function excluirVenda(id) {
-  if(!confirm('Remover esta venda?')) return;
-  var vd = vendas.filter(function(v){ return v.id===id; })[0];
+  if (!confirm('Remover esta venda?')) return;
+  var vd = vendas.filter(function(v){ return v.id === id; })[0];
   vendas = vendas.filter(function(v){ return v.id !== id; });
   salvar();
-  if(vd) {
-    Promise.all(vd.cotas.map(function(cod){
-      return supaUpdateCota(cod, {status:'disponivel',cliente_nome:null,cliente_empresa:null,cliente_telefone:null,plano:null,tiragem:null,obs:null,valor:null});
-    })).then(function(){ carregarCotasDB(function(){ renderAll(); }); });
-  } else {
-    renderAll();
-  }
+  if (vd && vd.cotas) {
+    Promise.all(vd.cotas.map(function(cod) {
+      return supaSetCota(cod, { status: 'disponivel', cliente_nome: null, cliente_empresa: null, cliente_telefone: null, plano: null, tiragem: null, obs: null, valor: null });
+    })).then(function() { sincronizar(function(){ renderAll(); }); });
+  } else { renderAll(); }
   showToast('Venda removida');
 }
 
-// Liberar cota pendente (direto do painel)
-function liberarCota(cod) {
-  if(!confirm('Liberar a cota '+cod+' e remover a reserva pendente?')) return;
-  supaUpdateCota(cod, {status:'disponivel',cliente_nome:null,cliente_empresa:null,cliente_telefone:null,plano:null,tiragem:null,obs:null,valor:null})
-    .then(function(){ carregarCotasDB(function(){ renderAll(); renderPendentes(); showToast('Cota '+cod+' liberada ✅','success'); }); })
-    .catch(function(){ showToast('Erro ao liberar cota','error'); });
-}
-
-// Confirmar cota pendente como vendida
-function confirmarPendente(cod) {
-  if(!confirm('Confirmar cota '+cod+' como VENDIDA?')) return;
-  supaUpdateCota(cod, {status:'vendida'})
-    .then(function(){ carregarCotasDB(function(){ renderAll(); renderPendentes(); showToast('Cota '+cod+' confirmada como vendida ✅','success'); }); })
-    .catch(function(){ showToast('Erro ao confirmar','error'); });
-}
-
-// Renderizar aba de pendentes
 function renderPendentes() {
   var el = document.getElementById('listaPendentes');
-  if(!el) return;
-  var pendentes = Object.keys(cotasDB).filter(function(k){ return cotasDB[k].status==='pendente'; });
+  if (!el) return;
+  var pend = Object.keys(cotasDB).filter(function(k){ return cotasDB[k].status === 'pendente'; });
   var badge = document.getElementById('badgePendentes');
-  if(badge) badge.textContent = pendentes.length > 0 ? pendentes.length : '';
-
-  if(pendentes.length===0){
-    el.innerHTML='<div class="empty-state"><div class="empty-icon">✅</div><div class="empty-text">Nenhuma reserva pendente</div></div>';
+  if (badge) badge.textContent = pend.length > 0 ? pend.length : '';
+  if (pend.length === 0) {
+    el.innerHTML = '<div class="empty-state"><div class="empty-icon">checkmark</div><div class="empty-text">Nenhuma reserva pendente</div></div>';
     return;
   }
-
-  // Agrupar por cliente
   var grupos = {};
-  pendentes.forEach(function(cod){
+  pend.forEach(function(cod) {
     var row = cotasDB[cod];
-    var key = (row.cliente_nome||'?')+'|'+(row.cliente_telefone||'');
-    if(!grupos[key]) grupos[key] = {row:row, cotas:[]};
+    var key = (row.cliente_nome||'?') + '||' + (row.cliente_telefone||'');
+    if (!grupos[key]) grupos[key] = { row: row, cotas: [] };
     grupos[key].cotas.push(cod);
   });
-
-  el.innerHTML = Object.keys(grupos).map(function(key){
-    var g = grupos[key];
-    var r = g.row;
-    var cotas = g.cotas;
-    var cotasBadges = cotas.map(function(c){ return '<span class="venda-cota-badge">'+c+'</span>'; }).join('');
-    var updated = r.updated_at ? new Date(r.updated_at).toLocaleString('pt-BR') : '—';
-    return '<div class="venda-card" style="border-left:3px solid #D4A800">'
-      +'<div class="venda-avatar" style="background:#D4A800">⏳</div>'
-      +'<div class="venda-info">'
-        +'<div class="venda-nome">'+(r.cliente_nome||'—')+'</div>'
-        +'<div class="venda-empresa">'+(r.cliente_empresa||'—')+' · '+(r.cliente_telefone||'—')+'</div>'
-        +'<div class="venda-cotas-list" style="margin-bottom:5px">'+cotasBadges+'</div>'
-        +'<div style="font-size:11px;color:var(--texto-claro)">'+( r.plano||'—')+' · '+(r.tiragem||'—')+'</div>'
-        +(r.valor?'<div class="venda-valor" style="margin-top:3px">R$ '+Number(r.valor).toLocaleString('pt-BR',{minimumFractionDigits:2})+'</div>':'')
-        +'<div style="font-size:10px;color:var(--texto-claro);margin-top:2px">Reservado em: '+updated+'</div>'
-      +'</div>'
-      +'<div class="venda-actions">'
-        +cotas.map(function(c){
-          return '<button style="padding:6px 8px;font-size:10px;border:1px solid var(--verde);border-radius:6px;background:white;color:var(--verde);cursor:pointer;margin-bottom:4px;white-space:nowrap" onclick="confirmarPendente(''+c+'')">✓ '+c+'</button>'
-                +'<button style="padding:6px 8px;font-size:10px;border:1px solid var(--vermelho);border-radius:6px;background:white;color:var(--vermelho);cursor:pointer;margin-bottom:4px;white-space:nowrap" onclick="liberarCota(''+c+'')">✕ '+c+'</button>';
-        }).join('')
-      +'</div>'
-      +'</div>';
+  var cores = ['#E85D04','#1B7A4A','#7A3B10','#185FA5','#993556'];
+  var keys = Object.keys(grupos);
+  el.innerHTML = keys.map(function(key, ki) {
+    var g = grupos[key]; var r = g.row; var cotas = g.cotas;
+    var ini = (r.cliente_nome||'?').substring(0,2).toUpperCase();
+    var cor = cores[ki % cores.length];
+    var updated = r.updated_at ? new Date(r.updated_at).toLocaleString('pt-BR') : '-';
+    var badges = cotas.map(function(c){ return '<span class="venda-cota-badge">' + c + '</span>'; }).join('');
+    var btns = cotas.map(function(c) {
+      return '<button style="padding:7px 10px;font-size:11px;border:1px solid var(--verde);border-radius:6px;background:white;color:var(--verde);cursor:pointer;margin-bottom:5px;display:block;width:100%" onclick="confirmarPendente(\'' + c + '\')">Confirmar ' + c + '</button>'
+           + '<button style="padding:7px 10px;font-size:11px;border:1px solid var(--vermelho);border-radius:6px;background:white;color:var(--vermelho);cursor:pointer;margin-bottom:5px;display:block;width:100%" onclick="liberarCota(\'' + c + '\')">Liberar ' + c + '</button>';
+    }).join('');
+    return '<div class="venda-card" style="border-left:3px solid #D4A800;margin-bottom:12px">'
+      + '<div class="venda-avatar" style="background:' + cor + '">' + ini + '</div>'
+      + '<div class="venda-info">'
+        + '<div class="venda-nome">' + (r.cliente_nome||'-') + '</div>'
+        + '<div class="venda-empresa">' + (r.cliente_empresa||'-') + ' · ' + (r.cliente_telefone||'-') + '</div>'
+        + '<div class="venda-cotas-list" style="margin:4px 0">' + badges + '</div>'
+        + '<div style="font-size:11px;color:var(--texto-claro)">' + (r.plano||'-') + ' · ' + (r.tiragem||'-') + '</div>'
+        + (r.valor ? '<div class="venda-valor">' + fmtMoeda(r.valor) + '</div>' : '')
+        + '<div style="font-size:10px;color:var(--texto-claro);margin-top:3px">' + updated + '</div>'
+      + '</div>'
+      + '<div class="venda-actions" style="min-width:120px">' + btns + '</div>'
+      + '</div>';
   }).join('');
 }
 
-/* ── CUSTOS PERSISTÊNCIA ── */
 function getCustos() {
   try { return JSON.parse(localStorage.getItem('promopao_custos') || '{}'); } catch(e) { return {}; }
 }
@@ -1021,12 +954,11 @@ function salvarCustos() {
 }
 function carregarCustos() {
   const c = getCustos();
-  if(c.tiragem)  document.getElementById('custTiragem').value  = c.tiragem;
-  if(c.designer) document.getElementById('custDesigner').value = c.designer;
-  if(c.frete)    document.getElementById('custFrete').value    = c.frete;
+  if (c.tiragem)  document.getElementById('custTiragem').value  = c.tiragem;
+  if (c.designer) document.getElementById('custDesigner').value = c.designer;
+  if (c.frete)    document.getElementById('custFrete').value    = c.frete;
 }
 
-/* ── FINANCEIRO ── */
 function renderFinanceiro() {
   carregarCustos();
   const custos = getCustos();
@@ -1034,240 +966,116 @@ function renderFinanceiro() {
   const custDesigner = custos.designer || 0;
   const custFrete    = custos.frete    || 0;
   const totalCustos  = custTiragem + custDesigner + custFrete;
-
-  const totalVend = vendas.filter(v=>v.status==='vendida').reduce((s,v)=>s+v.valor,0);
-  const totalRes  = vendas.filter(v=>v.status==='reservada').reduce((s,v)=>s+v.valor,0);
+  const totalVend = vendas.filter(function(v){ return v.status==='vendida'; }).reduce(function(s,v){ return s+v.valor; },0);
+  const totalRes  = vendas.filter(function(v){ return v.status==='reservada'; }).reduce(function(s,v){ return s+v.valor; },0);
   const totalGeral = totalVend + totalRes;
   const lucro = totalVend - totalCustos;
   const lucroComRes = totalGeral - totalCustos;
   const ocupadas = Object.keys(getCotasOcupadas()).length;
   const perc = Math.round(ocupadas/22*100);
-
-  // Cor do lucro
   const lucroColor = lucro >= 0 ? 'var(--verde)' : 'var(--vermelho)';
-  const lucroBg    = lucro >= 0 ? 'var(--verde-bg)' : 'var(--vermelho-bg)';
-  const lucroBorder= lucro >= 0 ? 'var(--verde)' : 'var(--vermelho)';
-
-  document.getElementById('resumoFinanceiro').innerHTML = `
-    <div class="resumo-grid" style="margin-bottom:10px">
-      <div class="resumo-card destaque" style="grid-column:span 2">
-        <div class="resumo-label">💰 Receita confirmada (vendidas)</div>
-        <div class="resumo-valor">${fmtMoeda(totalVend)}</div>
-      </div>
-      <div class="resumo-card">
-        <div class="resumo-label">⏳ Em reserva</div>
-        <div class="resumo-valor" style="color:var(--laranja);font-size:16px">${fmtMoeda(totalRes)}</div>
-      </div>
-      <div class="resumo-card">
-        <div class="resumo-label">📦 Cotas ocupadas</div>
-        <div class="resumo-valor" style="color:var(--marrom-medio);font-size:16px">${ocupadas}/22 <span style="font-size:11px;color:var(--texto-claro)">(${perc}%)</span></div>
-      </div>
-    </div>
-    ${totalCustos > 0 ? `
-    <div style="background:var(--branco);border:1px solid var(--cinza-borda);border-radius:14px;padding:16px;margin-bottom:10px">
-      <div style="font-size:13px;font-weight:700;color:var(--texto);margin-bottom:10px">📊 Resultado financeiro</div>
-      <div style="display:flex;justify-content:space-between;font-size:13px;padding:6px 0;border-bottom:0.5px solid var(--cinza-borda)">
-        <span style="color:var(--texto-claro)">Receita confirmada</span>
-        <span style="font-weight:600;color:var(--verde)">${fmtMoeda(totalVend)}</span>
-      </div>
-      ${totalRes > 0 ? `<div style="display:flex;justify-content:space-between;font-size:13px;padding:6px 0;border-bottom:0.5px solid var(--cinza-borda)">
-        <span style="color:var(--texto-claro)">+ Reservas (se confirmarem)</span>
-        <span style="font-weight:600;color:var(--laranja)">${fmtMoeda(totalRes)}</span>
-      </div>` : ''}
-      ${custTiragem > 0 ? `<div style="display:flex;justify-content:space-between;font-size:13px;padding:6px 0;border-bottom:0.5px solid var(--cinza-borda)">
-        <span style="color:var(--texto-claro)">− Tiragem</span>
-        <span style="color:var(--vermelho)">${fmtMoeda(custTiragem)}</span>
-      </div>` : ''}
-      ${custDesigner > 0 ? `<div style="display:flex;justify-content:space-between;font-size:13px;padding:6px 0;border-bottom:0.5px solid var(--cinza-borda)">
-        <span style="color:var(--texto-claro)">− Designer</span>
-        <span style="color:var(--vermelho)">${fmtMoeda(custDesigner)}</span>
-      </div>` : ''}
-      ${custFrete > 0 ? `<div style="display:flex;justify-content:space-between;font-size:13px;padding:6px 0;border-bottom:0.5px solid var(--cinza-borda)">
-        <span style="color:var(--texto-claro)">− Frete</span>
-        <span style="color:var(--vermelho)">${fmtMoeda(custFrete)}</span>
-      </div>` : ''}
-      <div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0 0">
-        <span style="font-size:14px;font-weight:700">Lucro atual</span>
-        <span style="font-family:'Syne',sans-serif;font-size:20px;font-weight:800;color:${lucroColor}">${lucro >= 0 ? '+' : ''}${fmtMoeda(lucro)}</span>
-      </div>
-      ${totalRes > 0 ? `<div style="display:flex;justify-content:space-between;align-items:center;padding:4px 0 0">
-        <span style="font-size:11px;color:var(--texto-claro)">Se todas reservas confirmarem</span>
-        <span style="font-size:13px;font-weight:700;color:${lucroComRes>=0?'var(--verde)':'var(--vermelho)'}">
-          ${lucroComRes>=0?'+':''}${fmtMoeda(lucroComRes)}
-        </span>
-      </div>` : ''}
-    </div>` : ''}`;
-
-  // Ponto de equilíbrio
+  document.getElementById('resumoFinanceiro').innerHTML =
+    '<div class="resumo-grid" style="margin-bottom:10px">'
+    + '<div class="resumo-card destaque" style="grid-column:span 2"><div class="resumo-label">Receita confirmada (vendidas)</div><div class="resumo-valor">' + fmtMoeda(totalVend) + '</div></div>'
+    + '<div class="resumo-card"><div class="resumo-label">Em reserva</div><div class="resumo-valor" style="color:var(--laranja);font-size:16px">' + fmtMoeda(totalRes) + '</div></div>'
+    + '<div class="resumo-card"><div class="resumo-label">Cotas ocupadas</div><div class="resumo-valor" style="color:var(--marrom-medio);font-size:16px">' + ocupadas + '/22 <span style="font-size:11px;color:var(--texto-claro)">(' + perc + '%)</span></div></div>'
+    + '</div>';
   const beBox = document.getElementById('breakEvenBox');
-  if(totalCustos > 0) {
-    beBox.style.display = 'block';
-    // Ticket médio por cota vendida
-    const cotasVendidas = vendas.filter(v=>v.status==='vendida').reduce((s,v)=>s+v.cotas.length,0);
-    const ticketMedioCota = cotasVendidas > 0 ? totalVend / cotasVendidas : 0;
-    // Cotações necessárias com base no ticket médio
-    let beHtml = '';
-    if(totalVend >= totalCustos) {
-      beHtml = `<div style="display:flex;align-items:center;gap:10px">
-        <div style="font-size:32px">🎉</div>
-        <div>
-          <div style="font-family:'Syne',sans-serif;font-size:15px;font-weight:800;color:var(--verde)">Custos cobertos!</div>
-          <div style="font-size:13px;color:var(--texto-claro)">Você já está no lucro. Cada nova venda é lucro puro.</div>
-        </div>
-      </div>`;
-    } else {
-      const falta = totalCustos - totalVend;
-      const cotasFaltam = ticketMedioCota > 0 ? Math.ceil(falta / ticketMedioCota) : '—';
-      // Barra de progresso
-      const progPerc = totalCustos > 0 ? Math.min(100, Math.round(totalVend / totalCustos * 100)) : 0;
-      beHtml = `
-        <div style="font-size:13px;font-weight:700;color:var(--texto);margin-bottom:10px">🎯 Ponto de equilíbrio</div>
-        <div style="display:flex;justify-content:space-between;font-size:12px;color:var(--texto-claro);margin-bottom:6px">
-          <span>Progresso para cobrir custos</span>
-          <span style="font-weight:700;color:var(--laranja)">${progPerc}%</span>
-        </div>
-        <div style="background:var(--cinza-bg);border-radius:8px;height:12px;overflow:hidden;margin-bottom:12px">
-          <div style="width:${progPerc}%;height:100%;background:${progPerc>=100?'var(--verde)':'var(--laranja)'};border-radius:8px;transition:width 0.4s"></div>
-        </div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
-          <div style="background:var(--vermelho-bg);border-radius:10px;padding:10px;text-align:center">
-            <div style="font-size:11px;color:var(--texto-claro);margin-bottom:2px">Falta arrecadar</div>
-            <div style="font-family:'Syne',sans-serif;font-size:16px;font-weight:800;color:var(--vermelho)">${fmtMoeda(falta)}</div>
-          </div>
-          <div style="background:var(--laranja-bg);border-radius:10px;padding:10px;text-align:center">
-            <div style="font-size:11px;color:var(--texto-claro);margin-bottom:2px">Cotas estimadas</div>
-            <div style="font-family:'Syne',sans-serif;font-size:16px;font-weight:800;color:var(--laranja)">${cotasFaltam} cotas</div>
-          </div>
-        </div>
-        ${ticketMedioCota > 0 ? `<div style="font-size:11px;color:var(--texto-claro);margin-top:8px;text-align:center">baseado no ticket médio de ${fmtMoeda(ticketMedioCota)} por cota</div>` : '<div style="font-size:11px;color:var(--texto-claro);margin-top:8px;text-align:center">registre vendas para calcular a estimativa de cotas</div>'}`;
-    }
-    beBox.innerHTML = beHtml;
-  } else {
-    beBox.style.display = 'none';
-  }
-
-  const todos = PLANOS.concat(EXCLUSIVOS);
+  if (beBox) beBox.style.display = 'none';
+  const cotasVendidas = vendas.filter(function(v){ return v.status==='vendida'; }).reduce(function(s,v){ return s+v.cotas.length; },0);
+  const todos2 = PLANOS.concat(EXCLUSIVOS);
   const contPlano = {};
-  vendas.forEach(v => { contPlano[v.plano] = (contPlano[v.plano]||0)+1; });
+  vendas.forEach(function(v){ contPlano[v.plano] = (contPlano[v.plano]||0)+1; });
   const maxQ = Math.max.apply(null, Object.values(contPlano).concat([1]));
-  document.getElementById('chartPlanos').innerHTML = todos.filter(p=>contPlano[p.id]).map(p => {
+  document.getElementById('chartPlanos').innerHTML = todos2.filter(function(p){ return contPlano[p.id]; }).map(function(p) {
     const qt = contPlano[p.id]||0;
-    return `<div style="margin-bottom:12px">
-      <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px">
-        <span style="font-weight:600">${p.nome}</span>
-        <span style="color:var(--laranja);font-weight:700">${qt} venda${qt>1?'s':''}</span>
-      </div>
-      <div style="background:var(--cinza-bg);border-radius:6px;height:8px;overflow:hidden">
-        <div style="width:${Math.round(qt/maxQ*100)}%;height:100%;background:var(--laranja);border-radius:6px"></div>
-      </div>
-    </div>`;
+    return '<div style="margin-bottom:12px">'
+      + '<div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px"><span style="font-weight:600">' + p.nome + '</span><span style="color:var(--laranja);font-weight:700">' + qt + ' venda' + (qt>1?'s':'') + '</span></div>'
+      + '<div style="background:var(--cinza-bg);border-radius:6px;height:8px;overflow:hidden"><div style="width:' + Math.round(qt/maxQ*100) + '%;height:100%;background:var(--laranja);border-radius:6px"></div></div>'
+      + '</div>';
   }).join('') || '<div style="color:var(--texto-claro);font-size:14px;text-align:center;padding:12px 0">Nenhuma venda ainda</div>';
-
   const vlrPorCota = {};
-  vendas.forEach(v => v.cotas.forEach(c => { vlrPorCota[c] = { valor: v.valor/v.cotas.length, cliente:v.nome }; }));
+  vendas.forEach(function(v){ v.cotas.forEach(function(c){ vlrPorCota[c] = { valor: v.valor/v.cotas.length, cliente: v.nome }; }); });
   const {frente, verso} = buildCotasCodes();
-  document.getElementById('cotasValorLista').innerHTML = frente.concat(verso).map((cod,i) => {
+  document.getElementById('cotasValorLista').innerHTML = frente.concat(verso).map(function(cod, i) {
     const info = vlrPorCota[cod];
-    const num = i<8 ? i+1 : i-7;
-    const lado = i<8 ? 'F' : 'V';
-    return `<div style="display:flex;align-items:center;gap:10px;padding:7px 0;border-bottom:0.5px solid var(--cinza-borda)">
-      <div style="width:34px;height:34px;border-radius:8px;background:${info?'var(--laranja-bg)':'var(--cinza-bg)'};border:1px solid ${info?'var(--laranja)':'var(--cinza-borda)'};display:flex;flex-direction:column;align-items:center;justify-content:center;flex-shrink:0">
-        <span style="font-family:'Syne',sans-serif;font-size:11px;font-weight:800;color:${info?'var(--laranja)':'var(--texto-claro)'}">${String(num).padStart(2,'0')}</span>
-        <span style="font-size:9px;color:var(--texto-claro)">${lado}</span>
-      </div>
-      <div style="flex:1;font-size:12px;font-weight:600;color:${info?'var(--texto)':'var(--texto-claro)'}">${info?info.cliente:'Disponível'}</div>
-      ${info?`<div style="font-size:12px;font-weight:700;color:var(--verde)">${fmtMoeda(info.valor)}</div>`:''}
-    </div>`;
+    const num = i < 8 ? i+1 : i-7;
+    const lado = i < 8 ? 'F' : 'V';
+    return '<div style="display:flex;align-items:center;gap:10px;padding:7px 0;border-bottom:0.5px solid var(--cinza-borda)">'
+      + '<div style="width:34px;height:34px;border-radius:8px;background:' + (info?'var(--laranja-bg)':'var(--cinza-bg)') + ';border:1px solid ' + (info?'var(--laranja)':'var(--cinza-borda)') + ';display:flex;flex-direction:column;align-items:center;justify-content:center;flex-shrink:0">'
+        + '<span style="font-family:\'Syne\',sans-serif;font-size:11px;font-weight:800;color:' + (info?'var(--laranja)':'var(--texto-claro)') + '">' + String(num).padStart(2,'0') + '</span>'
+        + '<span style="font-size:9px;color:var(--texto-claro)">' + lado + '</span>'
+      + '</div>'
+      + '<div style="flex:1;font-size:12px;font-weight:600;color:' + (info?'var(--texto)':'var(--texto-claro)') + '">' + (info?info.cliente:'Disponivel') + '</div>'
+      + (info ? '<div style="font-size:12px;font-weight:700;color:var(--verde)">' + fmtMoeda(info.valor) + '</div>' : '')
+      + '</div>';
   }).join('');
 }
 
-/* ── MODAIS ── */
 function abrirCota(cod) {
   var mapa = getCotasOcupadas();
   var vd = mapa[cod];
   var lado = cod.indexOf('F') === 0 ? 'Frente' : 'Verso';
   var num = cod.slice(1);
-  document.getElementById('modalCotaTitulo').textContent = 'Cota ' + num + ' — ' + lado;
-  if(!vd) {
+  document.getElementById('modalCotaTitulo').textContent = 'Cota ' + num + ' - ' + lado;
+  if (!vd) {
     document.getElementById('modalCotaConteudo').innerHTML =
-      '<div style="text-align:center;padding:24px 0">' +
-        '<div style="font-size:40px;margin-bottom:8px">🔴</div>' +
-        '<div style="font-family:\'Syne\',sans-serif;font-size:18px;font-weight:700;color:var(--vermelho)">Disponível</div>' +
-        '<div style="font-size:13px;color:var(--texto-claro);margin-top:6px">Esta cota ainda não foi vendida.</div>' +
-        '<button class="btn-primary" style="margin-top:20px" onclick="fecharModal(\'modalCota\');showTab(\'vender\')">Vender esta cota ➜</button>' +
-      '</div>';
+      '<div style="text-align:center;padding:24px 0">'
+      + '<div style="font-size:40px;margin-bottom:8px">🔴</div>'
+      + '<div style="font-family:\'Syne\',sans-serif;font-size:18px;font-weight:700;color:var(--vermelho)">Disponivel</div>'
+      + '<div style="font-size:13px;color:var(--texto-claro);margin-top:6px">Esta cota ainda nao foi vendida.</div>'
+      + '<button class="btn-primary" style="margin-top:20px" onclick="fecharModal(\'modalCota\');showTab(\'vender\')">Vender esta cota</button>'
+      + '</div>';
   } else {
     var todos = PLANOS.concat(EXCLUSIVOS);
-    var planoObj = todos.filter(function(p){return p.id===vd.plano;})[0];
-    var planoNome = planoObj ? planoObj.nome : vd.plano;
-    var statusCor = vd.status==='vendida' ? 'var(--verde)' : 'var(--laranja)';
-    var statusTxt = vd.status==='vendida' ? 'Vendida' : 'Reservada';
-    var cotasBadges = vd.cotas.map(function(c){return '<span class="venda-cota-badge">'+c+'</span>';}).join('');
-    var obsHtml = vd.obs ? '<div style="margin-top:8px;font-size:12px;color:var(--texto-claro);background:var(--cinza-bg);padding:8px 10px;border-radius:8px">📝 ' + vd.obs + '</div>' : '';
+    var planoObj = todos.filter(function(p){ return p.id === vd.plano; })[0];
+    var planoNome = planoObj ? planoObj.nome : (vd.plano||'-');
+    var statusCor = vd.status==='vendida' ? 'var(--verde)' : vd.status==='pendente' ? '#B8860B' : 'var(--laranja)';
+    var statusTxt = vd.status==='vendida' ? 'Vendida' : vd.status==='pendente' ? 'Pendente' : 'Reservada';
+    var cotasBadges = (vd.cotas||[cod]).map(function(c){ return '<span class="venda-cota-badge">' + c + '</span>'; }).join('');
     document.getElementById('modalCotaConteudo').innerHTML =
-      '<div style="background:var(--verde-bg);border:1px solid var(--verde);border-radius:12px;padding:14px;margin-bottom:12px">' +
-        '<div style="font-family:\'Syne\',sans-serif;font-size:16px;font-weight:800">' + vd.nome + '</div>' +
-        '<div style="font-size:13px;color:var(--texto-claro)">' + (vd.empresa||'—') + ' · ' + (vd.telefone||'—') + '</div>' +
-      '</div>' +
-      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px">' +
-        '<div style="background:var(--cinza-bg);border-radius:10px;padding:10px;text-align:center">' +
-          '<div style="font-size:10px;color:var(--texto-claro);margin-bottom:2px">Plano</div>' +
-          '<div style="font-size:13px;font-weight:700">' + planoNome + '</div>' +
-        '</div>' +
-        '<div style="background:var(--cinza-bg);border-radius:10px;padding:10px;text-align:center">' +
-          '<div style="font-size:10px;color:var(--texto-claro);margin-bottom:2px">Status</div>' +
-          '<div style="font-size:13px;font-weight:700;color:' + statusCor + '">' + statusTxt + '</div>' +
-        '</div>' +
-      '</div>' +
-      '<div style="font-size:12px;color:var(--texto-claro);margin-bottom:4px">Todas as cotas desta venda:</div>' +
-      '<div style="display:-webkit-flex;display:flex;-webkit-flex-wrap:wrap;flex-wrap:wrap;gap:5px;margin-bottom:12px">' + cotasBadges + '</div>' +
-      '<div style="display:-webkit-flex;display:flex;-webkit-justify-content:space-between;justify-content:space-between;-webkit-align-items:center;align-items:center;border-top:1px solid var(--cinza-borda);padding-top:10px">' +
-        '<div style="font-family:\'Syne\',sans-serif;font-size:18px;font-weight:800;color:var(--verde)">' + fmtMoeda(vd.valor) + '</div>' +
-        '<div style="font-size:12px;color:var(--texto-claro)">' + fmtData(vd.data) + '</div>' +
-      '</div>' + obsHtml;
+      '<div style="background:var(--verde-bg);border:1px solid var(--verde);border-radius:12px;padding:14px;margin-bottom:12px">'
+        + '<div style="font-family:\'Syne\',sans-serif;font-size:16px;font-weight:800">' + vd.nome + '</div>'
+        + '<div style="font-size:13px;color:var(--texto-claro)">' + (vd.empresa||'-') + ' · ' + (vd.telefone||'-') + '</div>'
+      + '</div>'
+      + '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px">'
+        + '<div style="background:var(--cinza-bg);border-radius:10px;padding:10px;text-align:center"><div style="font-size:10px;color:var(--texto-claro)">Plano</div><div style="font-size:13px;font-weight:700">' + planoNome + '</div></div>'
+        + '<div style="background:var(--cinza-bg);border-radius:10px;padding:10px;text-align:center"><div style="font-size:10px;color:var(--texto-claro)">Status</div><div style="font-size:13px;font-weight:700;color:' + statusCor + '">' + statusTxt + '</div></div>'
+      + '</div>'
+      + '<div style="font-size:12px;color:var(--texto-claro);margin-bottom:4px">Cotas:</div>'
+      + '<div style="display:flex;flex-wrap:wrap;gap:5px;margin-bottom:12px">' + cotasBadges + '</div>'
+      + (vd.status==='pendente' ? '<button class="btn-primary" style="margin-bottom:8px;background:var(--verde)" onclick="confirmarPendente(\'' + cod + '\');fecharModal(\'modalCota\')">Confirmar como Vendida</button><button class="btn-danger" style="width:100%;padding:12px;margin-top:4px" onclick="liberarCota(\'' + cod + '\');fecharModal(\'modalCota\')">Liberar Cota</button>' : '');
   }
   document.getElementById('modalCota').classList.add('open');
 }
 
 function abrirVenda(id) {
-  var vd = vendas.filter(function(v){return v.id===id;})[0];
-  if(!vd) return;
+  var vd = vendas.filter(function(v){ return v.id===id; })[0];
+  if (!vd) return;
   var todos = PLANOS.concat(EXCLUSIVOS);
   var t = TIRAGENS_INFO[vd.tiragem] || TIRAGENS_INFO['nenhum'];
-  var planoObj = todos.filter(function(p){return p.id===vd.plano;})[0];
+  var planoObj = todos.filter(function(p){ return p.id===vd.plano; })[0];
   var planoNome = planoObj ? planoObj.nome : vd.plano;
-  var tiragemTxt = t.nome + (vd.qtdeTiragens > 1 ? ' × ' + vd.qtdeTiragens : '');
-  var cotasBadges = vd.cotas.map(function(c){return '<span class="venda-cota-badge">'+c+'</span>';}).join('');
-  var tiragemLinha = (vd.valorTiragem||0)>0 ?
-    '<div style="display:-webkit-flex;display:flex;-webkit-justify-content:space-between;justify-content:space-between;margin-bottom:4px"><span style="color:var(--texto-claro)">Tiragem</span><span>'+fmtMoeda(vd.valorTiragem)+'</span></div>' : '';
-  var descontoLinha = (vd.valorDesconto||0)>0 ?
-    '<div style="display:-webkit-flex;display:flex;-webkit-justify-content:space-between;justify-content:space-between;margin-bottom:4px"><span style="color:var(--texto-claro)">Desconto</span><span style="color:var(--verde)">− '+fmtMoeda(vd.valorDesconto)+'</span></div>' : '';
-  var obsHtml = vd.obs ?
-    '<div style="font-size:12px;color:var(--texto-claro);background:var(--cinza-bg);padding:10px;border-radius:8px;margin-bottom:12px">📝 ' + vd.obs + '</div>' : '';
+  var tiragemTxt = t.nome + (vd.qtdeTiragens > 1 ? ' x ' + vd.qtdeTiragens : '');
+  var cotasBadges = vd.cotas.map(function(c){ return '<span class="venda-cota-badge">' + c + '</span>'; }).join('');
+  var tiragemLinha = (vd.valorTiragem||0) > 0 ? '<div style="display:flex;justify-content:space-between;margin-bottom:4px"><span style="color:var(--texto-claro)">Tiragem</span><span>' + fmtMoeda(vd.valorTiragem) + '</span></div>' : '';
+  var descontoLinha = (vd.valorDesconto||0) > 0 ? '<div style="display:flex;justify-content:space-between;margin-bottom:4px"><span style="color:var(--texto-claro)">Desconto</span><span style="color:var(--verde)">- ' + fmtMoeda(vd.valorDesconto) + '</span></div>' : '';
+  var obsHtml = vd.obs ? '<div style="font-size:12px;color:var(--texto-claro);background:var(--cinza-bg);padding:10px;border-radius:8px;margin-bottom:12px">Obs: ' + vd.obs + '</div>' : '';
   document.getElementById('modalVendaTitulo').textContent = vd.nome;
   document.getElementById('modalVendaConteudo').innerHTML =
-    '<div style="font-size:13px;color:var(--texto-claro);margin-bottom:14px">' + (vd.empresa||'—') + ' · ' + (vd.telefone||'—') + '</div>' +
-    '<div style="font-size:13px;font-weight:600;color:var(--texto-medio);margin-bottom:6px">Cotas contratadas:</div>' +
-    '<div style="display:-webkit-flex;display:flex;-webkit-flex-wrap:wrap;flex-wrap:wrap;gap:5px;margin-bottom:14px">' + cotasBadges + '</div>' +
-    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:14px">' +
-      '<div style="background:var(--cinza-bg);border-radius:10px;padding:10px;text-align:center">' +
-        '<div style="font-size:10px;color:var(--texto-claro)">Plano</div>' +
-        '<div style="font-size:12px;font-weight:700">' + planoNome + '</div>' +
-      '</div>' +
-      '<div style="background:var(--cinza-bg);border-radius:10px;padding:10px;text-align:center">' +
-        '<div style="font-size:10px;color:var(--texto-claro)">Tiragem</div>' +
-        '<div style="font-size:12px;font-weight:700">' + tiragemTxt + '</div>' +
-      '</div>' +
-    '</div>' +
-    '<div style="background:var(--cinza-bg);border-radius:12px;padding:12px;margin-bottom:12px;font-size:13px">' +
-      '<div style="display:-webkit-flex;display:flex;-webkit-justify-content:space-between;justify-content:space-between;margin-bottom:4px"><span style="color:var(--texto-claro)">Cotas</span><span>'+fmtMoeda(vd.valorBase||vd.valor)+'</span></div>' +
-      tiragemLinha + descontoLinha +
-      '<div style="display:-webkit-flex;display:flex;-webkit-justify-content:space-between;justify-content:space-between;border-top:1px solid var(--cinza-borda);padding-top:6px;margin-top:4px">' +
-        '<span style="font-weight:700">Total</span>' +
-        '<span style="font-family:\'Syne\',sans-serif;font-size:16px;font-weight:800;color:var(--verde)">'+fmtMoeda(vd.valor)+'</span>' +
-      '</div>' +
-    '</div>' + obsHtml +
-    '<button class="btn-danger" style="width:100%;padding:12px" onclick="excluirVenda('+vd.id+');fecharModal(\'modalVenda\')">Excluir esta venda</button>';
+    '<div style="font-size:13px;color:var(--texto-claro);margin-bottom:14px">' + (vd.empresa||'-') + ' · ' + (vd.telefone||'-') + '</div>'
+    + '<div style="font-size:13px;font-weight:600;color:var(--texto-medio);margin-bottom:6px">Cotas contratadas:</div>'
+    + '<div style="display:flex;flex-wrap:wrap;gap:5px;margin-bottom:14px">' + cotasBadges + '</div>'
+    + '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:14px">'
+      + '<div style="background:var(--cinza-bg);border-radius:10px;padding:10px;text-align:center"><div style="font-size:10px;color:var(--texto-claro)">Plano</div><div style="font-size:12px;font-weight:700">' + planoNome + '</div></div>'
+      + '<div style="background:var(--cinza-bg);border-radius:10px;padding:10px;text-align:center"><div style="font-size:10px;color:var(--texto-claro)">Tiragem</div><div style="font-size:12px;font-weight:700">' + tiragemTxt + '</div></div>'
+    + '</div>'
+    + '<div style="background:var(--cinza-bg);border-radius:12px;padding:12px;margin-bottom:12px;font-size:13px">'
+      + '<div style="display:flex;justify-content:space-between;margin-bottom:4px"><span style="color:var(--texto-claro)">Cotas</span><span>' + fmtMoeda(vd.valorBase||vd.valor) + '</span></div>'
+      + tiragemLinha + descontoLinha
+      + '<div style="display:flex;justify-content:space-between;border-top:1px solid var(--cinza-borda);padding-top:6px;margin-top:4px"><span style="font-weight:700">Total</span><span style="font-family:\'Syne\',sans-serif;font-size:16px;font-weight:800;color:var(--verde)">' + fmtMoeda(vd.valor) + '</span></div>'
+    + '</div>' + obsHtml
+    + '<button class="btn-danger" style="width:100%;padding:12px" onclick="excluirVenda(' + vd.id + ');fecharModal(\'modalVenda\')">Excluir esta venda</button>';
   document.getElementById('modalVenda').classList.add('open');
 }
 
@@ -1284,15 +1092,14 @@ function showToast(msg, tipo) {
 function showTab(nome) {
   Array.prototype.slice.call(document.querySelectorAll('.page')).forEach(function(p){ p.classList.remove('active'); });
   Array.prototype.slice.call(document.querySelectorAll('.tab-btn')).forEach(function(b){ b.classList.remove('active'); });
-  document.getElementById('tab-'+nome).classList.add('active');
-  var tabs = ['visao','vender','vendas','financeiro','pendentes'];
-  var idx = tabs.indexOf(nome);
+  document.getElementById('tab-' + nome).classList.add('active');
+  var idx = ['visao','vender','vendas','financeiro','pendentes'].indexOf(nome);
   document.querySelectorAll('.tab-btn')[idx].classList.add('active');
-  if(nome==='visao')      { renderGrids(); renderStats(); }
-  if(nome==='vender')     { renderPlanosGrid(); renderCotasPicker(); }
-  if(nome==='vendas')     { renderVendas(); }
-  if(nome==='financeiro') { renderFinanceiro(); }
-  if(nome==='pendentes')  { renderPendentes(); }
+  if (nome === 'visao')      { renderGrids(); renderStats(); }
+  if (nome === 'vender')     { renderPlanosGrid(); renderCotasPicker(); }
+  if (nome === 'vendas')     { renderVendas(); }
+  if (nome === 'financeiro') { renderFinanceiro(); }
+  if (nome === 'pendentes')  { renderPendentes(); }
 }
 
 function salvar() { try { localStorage.setItem('promopao_vendas', JSON.stringify(vendas)); } catch(e) {} }
@@ -1303,13 +1110,12 @@ function renderAll() {
 }
 
 function init() {
-  carregarCotasDB(function(){ renderAll(); });
-  // Recarregar banco a cada 30s para capturar novos pedidos
-  setInterval(function(){ carregarCotasDB(function(){ renderGrids(); renderStats(); renderPendentes(); }); }, 30000);
+  sincronizar(function(){ renderAll(); });
+  setInterval(function(){ sincronizar(function(){ renderGrids(); renderStats(); renderPendentes(); }); }, 30000);
 }
 
-if(document.readyState === "loading") {
-  document.addEventListener("DOMContentLoaded", init);
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', init);
 } else {
   init();
 }
