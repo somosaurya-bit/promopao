@@ -414,6 +414,14 @@
   </div>
 </div>
 
+<div class="modal-overlay" id="modalConfirmar" onclick="fecharModal('modalConfirmar')">
+  <div class="modal-box" onclick="event.stopPropagation()">
+    <div class="modal-handle"></div>
+    <div class="modal-title">Confirmar pedido como venda</div>
+    <div id="modalConfirmarConteudo"></div>
+  </div>
+</div>
+
 <div class="toast" id="toast"></div>
 
 <script>
@@ -462,10 +470,116 @@ function liberarCota(cod) {
 }
 
 function confirmarPendente(cod) {
-  if (!confirm('Confirmar cota ' + cod + ' como VENDIDA?')) return;
-  supaSetCota(cod, { status: 'vendida' })
-    .then(function() { sincronizar(function() { renderAll(); showToast('Cota ' + cod + ' confirmada!', 'success'); }); })
-    .catch(function() { showToast('Erro ao confirmar', 'error'); });
+  // Agrupar todas as cotas do mesmo cliente
+  var row = cotasDB[cod];
+  if (!row) return;
+  var clienteKey = (row.cliente_nome||'') + '||' + (row.cliente_telefone||'');
+  var cotasDoCliente = Object.keys(cotasDB).filter(function(k){
+    var r = cotasDB[k];
+    return r.status === 'pendente'
+      && (r.cliente_nome||'') + '||' + (r.cliente_telefone||'') === clienteKey;
+  });
+  abrirModalConfirmar(cotasDoCliente, row);
+}
+
+function abrirModalConfirmar(cotas, row) {
+  // Calcular valor estimado baseado no que veio do cliente
+  var valorExistente = row.valor || 0;
+
+  var cotasBadges = cotas.map(function(c){ return '<span class="venda-cota-badge">' + c + '</span>'; }).join('');
+
+  document.getElementById('modalConfirmarConteudo').innerHTML =
+    '<div style="background:var(--laranja-bg);border:1px solid var(--laranja);border-radius:12px;padding:12px 14px;margin-bottom:14px;font-size:12px;color:var(--marrom-medio)">'
+    + 'Pedido recebido pelo link do cliente. Confirme os dados abaixo e ajuste o valor se necessario.'
+    + '</div>'
+
+    + '<div style="font-size:11px;font-weight:700;color:var(--texto-claro);margin-bottom:4px;letter-spacing:0.3px">CLIENTE</div>'
+    + '<div style="background:var(--cinza-bg);border-radius:10px;padding:12px;margin-bottom:12px">'
+      + '<div style="font-size:15px;font-weight:700;margin-bottom:2px">' + (row.cliente_nome||'-') + '</div>'
+      + '<div style="font-size:13px;color:var(--texto-claro)">' + (row.cliente_empresa||'-') + '</div>'
+      + '<div style="font-size:13px;color:var(--texto-claro)">' + (row.cliente_telefone||'-') + '</div>'
+    + '</div>'
+
+    + '<div style="font-size:11px;font-weight:700;color:var(--texto-claro);margin-bottom:4px;letter-spacing:0.3px">COTAS</div>'
+    + '<div style="display:flex;flex-wrap:wrap;gap:5px;margin-bottom:12px">' + cotasBadges + '</div>'
+
+    + '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px">'
+      + '<div style="background:var(--cinza-bg);border-radius:10px;padding:10px;text-align:center">'
+        + '<div style="font-size:10px;color:var(--texto-claro);margin-bottom:2px">Plano</div>'
+        + '<div style="font-size:12px;font-weight:700">' + (row.plano||'-') + '</div>'
+      + '</div>'
+      + '<div style="background:var(--cinza-bg);border-radius:10px;padding:10px;text-align:center">'
+        + '<div style="font-size:10px;color:var(--texto-claro);margin-bottom:2px">Tiragem</div>'
+        + '<div style="font-size:12px;font-weight:700">' + (row.tiragem||'-') + '</div>'
+      + '</div>'
+    + '</div>'
+
+    + (row.obs ? '<div style="background:var(--cinza-bg);border-radius:10px;padding:10px;margin-bottom:12px;font-size:12px;color:var(--texto-medio)">Obs do cliente: ' + row.obs + '</div>' : '')
+
+    + '<div style="margin-bottom:12px">'
+      + '<label style="display:block;font-size:12px;font-weight:600;color:var(--texto-medio);margin-bottom:5px">Valor final (pode editar)</label>'
+      + '<input type="number" id="inputValorConfirmar" value="' + valorExistente.toFixed(2) + '" step="0.01" min="0" style="width:100%;padding:11px 13px;border:1.5px solid var(--cinza-borda);border-radius:10px;font-size:15px;font-weight:700;color:var(--laranja);background:var(--laranja-bg);outline:none">'
+    + '</div>'
+
+    + '<div style="margin-bottom:16px">'
+      + '<label style="display:block;font-size:12px;font-weight:600;color:var(--texto-medio);margin-bottom:5px">Status</label>'
+      + '<select id="selectStatusConfirmar" style="width:100%;padding:11px 13px;border:1.5px solid var(--cinza-borda);border-radius:10px;font-size:14px;background:var(--cinza-bg);outline:none">'
+        + '<option value="vendida">Vendida</option>'
+        + '<option value="reservada">Reservada</option>'
+      + '</select>'
+    + '</div>'
+
+    + '<button onclick="finalizarConfirmacao(' + JSON.stringify(cotas) + ',' + JSON.stringify(row) + ')" style="width:100%;padding:15px;background:var(--verde);color:white;border:none;border-radius:12px;font-family:Syne,sans-serif;font-size:15px;font-weight:700;cursor:pointer;margin-bottom:8px">'
+      + 'Registrar como venda'
+    + '</button>'
+    + '<button onclick="fecharModal(\'modalConfirmar\')" style="width:100%;padding:13px;background:transparent;color:var(--texto-claro);border:1.5px solid var(--cinza-borda);border-radius:12px;font-size:14px;cursor:pointer">'
+      + 'Cancelar'
+    + '</button>';
+
+  document.getElementById('modalConfirmar').classList.add('open');
+}
+
+function finalizarConfirmacao(cotas, row) {
+  var valorFinal = parseFloat(document.getElementById('inputValorConfirmar').value) || 0;
+  var statusFinal = document.getElementById('selectStatusConfirmar').value;
+
+  // Registrar como venda local
+  var venda = {
+    id: Date.now(),
+    nome: row.cliente_nome || '-',
+    empresa: row.cliente_empresa || '',
+    telefone: row.cliente_telefone || '',
+    cotas: cotas,
+    plano: row.plano || '',
+    tiragem: row.tiragem || '',
+    qtdeTiragens: 1,
+    status: statusFinal,
+    obs: row.obs || '',
+    valorBase: valorFinal,
+    valorTiragem: 0,
+    valorDesconto: 0,
+    valor: valorFinal,
+    data: new Date().toISOString(),
+    _fromPedido: true,
+  };
+  vendas.push(venda);
+  salvar();
+
+  // Atualizar no Supabase
+  Promise.all(cotas.map(function(cod) {
+    return supaSetCota(cod, { status: statusFinal, valor: valorFinal });
+  })).then(function() {
+    sincronizar(function() {
+      renderAll();
+      fecharModal('modalConfirmar');
+      showToast('Venda registrada com sucesso!', 'success');
+      showTab('vendas');
+    });
+  }).catch(function() {
+    renderAll();
+    fecharModal('modalConfirmar');
+    showToast('Venda salva (erro no banco)', 'error');
+  });
 }
 
 // ── DADOS ──
@@ -1044,7 +1158,7 @@ function abrirCota(cod) {
       + '</div>'
       + '<div style="font-size:12px;color:var(--texto-claro);margin-bottom:4px">Cotas:</div>'
       + '<div style="display:flex;flex-wrap:wrap;gap:5px;margin-bottom:12px">' + cotasBadges + '</div>'
-      + (vd.status==='pendente' ? '<button class="btn-primary" style="margin-bottom:8px;background:var(--verde)" onclick="confirmarPendente(\'' + cod + '\');fecharModal(\'modalCota\')">Confirmar como Vendida</button><button class="btn-danger" style="width:100%;padding:12px;margin-top:4px" onclick="liberarCota(\'' + cod + '\');fecharModal(\'modalCota\')">Liberar Cota</button>' : '');
+      + (vd.status==='pendente' ? '<button class="btn-primary" style="margin-bottom:8px;background:var(--verde)" onclick="fecharModal(\'modalCota\');confirmarPendente(\'' + cod + '\')">Confirmar como Vendida</button><button class="btn-danger" style="width:100%;padding:12px;margin-top:4px" onclick="liberarCota(\'' + cod + '\');fecharModal(\'modalCota\')">Liberar Cota</button>' : '');
   }
   document.getElementById('modalCota').classList.add('open');
 }
