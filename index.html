@@ -1049,7 +1049,11 @@ function renderVendas() {
   const cores = ['#E85D04','#1B7A4A','#7A3B10','#185FA5','#993556'];
   el.innerHTML = lista.map(function(v) {
     const ini = (v.nome||'?').substring(0,2).toUpperCase();
-    const cor = cores[v.id % cores.length];
+    const corIdx = typeof v.id === 'number' ? v.id % cores.length : (v.nome||'?').charCodeAt(0) % cores.length;
+    const cor = cores[corIdx];
+    const idSafe = JSON.stringify(String(v.id));
+    const fromDB = v._fromDB ? 'true' : 'false';
+    const cotasSafe = JSON.stringify(v.cotas);
     return '<div class="venda-card">'
       + '<div class="venda-avatar" style="background:' + cor + '">' + ini + '</div>'
       + '<div class="venda-info">'
@@ -1063,8 +1067,7 @@ function renderVendas() {
         + '<div class="venda-data">' + fmtData(v.data) + '</div>'
       + '</div>'
       + '<div class="venda-actions">'
-        + '<button class="btn-danger" onclick="excluirVenda(' + v.id + ')">x</button>'
-        + '<button style="padding:8px 10px;border:1px solid var(--cinza-borda);border-radius:8px;background:white;font-size:12px;cursor:pointer" onclick="abrirVenda(' + v.id + ')">ver</button>'
+        + '<button class="btn-danger" onclick="excluirVendaSafe(' + idSafe + ',' + fromDB + ',' + cotasSafe + ')">x</button>'
       + '</div>'
       + '</div>';
   }).join('');
@@ -1078,16 +1081,33 @@ function setFiltro(f, btn) {
 }
 
 function excluirVenda(id) {
-  if (!confirm('Remover esta venda?')) return;
-  var vd = vendas.filter(function(v){ return v.id === id; })[0];
-  vendas = vendas.filter(function(v){ return v.id !== id; });
+  excluirVendaSafe(String(id), false, null);
+}
+
+function excluirVendaSafe(id, fromDB, cotas) {
+  if (!confirm('Remover esta venda e liberar as cotas?')) return;
+
+  // Remove do localStorage se existir
+  var idNum = Number(id);
+  var vd = vendas.filter(function(v){ return v.id === idNum || String(v.id) === String(id); })[0];
+  vendas = vendas.filter(function(v){ return v.id !== idNum && String(v.id) !== String(id); });
   salvar();
-  if (vd && vd.cotas) {
-    Promise.all(vd.cotas.map(function(cod) {
+
+  // Cotas a liberar: prioridade para as passadas, fallback para as da venda local
+  var cotasLiberar = cotas && cotas.length ? cotas : (vd && vd.cotas ? vd.cotas : []);
+
+  if (cotasLiberar.length > 0) {
+    Promise.all(cotasLiberar.map(function(cod) {
       return supaSetCota(cod, { status: 'disponivel', cliente_nome: null, cliente_empresa: null, cliente_telefone: null, plano: null, tiragem: null, obs: null, valor: null });
-    })).then(function() { sincronizar(function(){ renderAll(); }); });
-  } else { renderAll(); }
-  showToast('Venda removida');
+    })).then(function() {
+      sincronizar(function(){ renderAll(); showToast('Venda removida e cotas liberadas', 'success'); });
+    }).catch(function() {
+      renderAll(); showToast('Removido localmente', 'error');
+    });
+  } else {
+    renderAll();
+    showToast('Venda removida');
+  }
 }
 
 function renderPendentes() {
